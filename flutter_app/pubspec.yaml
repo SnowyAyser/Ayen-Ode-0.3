@@ -1,0 +1,47 @@
+name: ayen_ode
+description: "Ayen-Ode narrative RPG — Flutter client for Windows desktop and Android."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Routing / state
+  go_router: ^14.6.2
+  flutter_riverpod: ^2.6.1
+
+  # Networking
+  dio: ^5.7.0
+
+  # Persistence
+  flutter_secure_storage: ^9.2.2
+  shared_preferences: ^2.3.3
+
+  # Models / codegen
+  freezed_annotation: ^2.4.4
+  json_annotation: ^4.9.0
+
+  # UI
+  flutter_svg: ^2.0.10+1
+  cached_network_image: ^3.4.1
+  qr_flutter: ^4.1.0
+
+  # Windows desktop chrome (fullscreen, F11, etc.)
+  window_manager: ^0.4.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  freezed: ^2.5.7
+  json_serializable: ^6.8.0
+  build_runner: ^2.4.13
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/config.json
