@@ -293,4 +293,35 @@ class SettingsApp:
         try:
             write_env(new_values)
         except OSError as e:
-            messagebox.showerror
+            messagebox.showerror(
+                "Couldn't save settings",
+                f"Failed to write {ENV_PATH}:\n\n{e}",
+                parent=self.root,
+            )
+            return
+
+        self.status_label.config(text="Saved. Restart Ayen-Ode for changes to take effect.")
+        self.root.after(900, self.root.destroy)
+
+    def _on_close(self) -> None:
+        """Close the window. Bound to the Esc key and the title-bar X button."""
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
+
+
+def main() -> None:
+    """Module entry point. Invoked by:
+      - source mode:  python -m ayen_ode.settings_window
+      - frozen mode:  Ayen-Ode.exe --settings (re-executed from /api/settings/launch)
+
+    Opens the settings window and blocks on the tkinter mainloop. Returns when
+    the user closes the window or hits Save."""
+    root = tk.Tk()
+    SettingsApp(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
