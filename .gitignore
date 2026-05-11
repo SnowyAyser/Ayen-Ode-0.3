@@ -16,3 +16,9 @@ build/
 server*.log
 *.out.log
 *.err.log
+# Build artifacts that show up beside the spec file
+*.spec.bak
+build/ayen-ode/warn-*.txt
+build/ayen-ode/xref-*.html
+# IMPORTANT: Ayen-Ode.exe at the repo root is the shipped artifact — it is
+# intentionally tracked. Don't add *.exe to this file.

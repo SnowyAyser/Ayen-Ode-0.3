@@ -48,8 +48,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-; Ship the entire PyInstaller onedir folder.
-Source: "..\dist\Ayen-Ode\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Ship the single-file PyInstaller build.
+Source: "..\dist\Ayen-Ode.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"

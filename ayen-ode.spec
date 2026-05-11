@@ -1,20 +1,22 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for Ayen-Ode (Windows desktop EXE).
+"""PyInstaller spec for Ayen-Ode (Windows desktop EXE — single-file build).
 
 Build:
     pyinstaller --noconfirm ayen-ode.spec
 
-Output (onedir, no UPX):
-    dist/Ayen-Ode/
-        Ayen-Ode.exe
-        static/
-        .env.example
-        ...runtime DLLs/PYDs and the _internal/ folder
+Output (onefile, no UPX):
+    dist/Ayen-Ode.exe       (~30 MB, self-extracting)
 
-We deliberately use onedir (not onefile) for three reasons:
-  1. Startup is <500 ms instead of 1-3 s (onefile extracts to %TEMP% every launch).
-  2. Antivirus engines flag onefile self-extractors at much higher rates.
-  3. StaticFiles path resolution is simpler when files live next to the EXE.
+scripts/build_exe.ps1 then copies that to the repo root so a fresh clone shows
+Ayen-Ode.exe right at the top level — double-click and run.
+
+Trade-offs vs. onedir:
+  + One file. Nothing to install, no folder of deps next to the EXE.
+  - ~1-2 s longer cold start (extracts to %TEMP%/_MEI<rand> on launch).
+  - Higher AV false-positive surface (self-extractor pattern). We mitigate by
+    leaving UPX off and shipping unpacked binaries.
+Path-resolution under onefile is already covered by paths.bundle_dir(): it
+reads sys._MEIPASS first, so static/ and .env.example resolve correctly.
 """
 
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files, collect_dynamic_libs
@@ -134,13 +136,15 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.datas,
     [],
-    exclude_binaries=True,
     name="Ayen-Ode",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,                 # UPX is the #1 cause of Defender false positives.
+    runtime_tmpdir=None,       # default: extract to %TEMP%/_MEI<rand>
     console=False,             # GUI app — no console window. Logs go to %APPDATA%/Ayen-Ode/app.log.
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -149,12 +153,5 @@ exe = EXE(
     entitlements_file=None,
     icon=None,                 # add path to .ico here once we have one
 )
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=False,
-    name="Ayen-Ode",
-)
+# No COLLECT block — this is a single-file build. The EXE above is the
+# entire deliverable.

@@ -10,10 +10,9 @@ the same process. Production deploys to Render (`render.yaml`).
 
 There are **two ways to run it**:
 
-1. **Desktop app (recommended for end users)** — a Windows installer or
-   portable EXE that bundles Python, all dependencies, the server, and the UI
-   into one app. No prerequisites, no terminal, opens in a native window. See
-   [Desktop app](#desktop-app) below.
+1. **Desktop app (recommended for end users)** — `Ayen-Ode.exe` sits at the
+   repo root. Double-click it. That's the whole install flow. No Python, no
+   terminal, no folder of dependencies. See [Desktop app](#desktop-app) below.
 2. **Source / web mode (for developers)** — the original Python + browser
    setup. The server binds a local port and you visit it in your browser.
 
@@ -21,29 +20,35 @@ There are **two ways to run it**:
 
 ## Desktop app
 
-The desktop build wraps the same server + UI inside a native window (Edge
-WebView2 on Windows 10/11). It binds to `127.0.0.1` on a random free port —
-nothing is exposed to the network. Your worlds and `.env` live in
-`%APPDATA%\Ayen-Ode\` so they survive reinstalls.
+`Ayen-Ode.exe` (single file, ~30 MB) is the entire app. It bundles Python,
+the server, the UI, and every dependency. Double-click and a native window
+opens (Edge WebView2 on Windows 10/11). The server inside binds to
+`127.0.0.1` on a random free port — nothing is exposed to the network.
+
+Your worlds and `.env` live separately in `%APPDATA%\Ayen-Ode\` so they
+survive deleting/replacing the EXE.
 
 ### Running it
 
-Either:
+**Just double-click `Ayen-Ode.exe`** at the repo root.
 
-- Run **`Ayen-Ode-Setup-<version>.exe`** to install (per-user, no admin) and
-  launch from the Start Menu, **or**
-- Unzip the portable `Ayen-Ode\` folder anywhere and double-click
-  `Ayen-Ode.exe`.
+First launch:
+1. Seeds `%APPDATA%\Ayen-Ode\.env` from the bundled template.
+2. Opens the dashboard.
+3. Click **Settings** → enter your `ANTHROPIC_API_KEY` → **Save**.
+4. Click **Restart**. The window will close — re-open `Ayen-Ode.exe`.
+   (A one-click in-app reload is on the v2 list.)
 
-On first launch the app seeds `%APPDATA%\Ayen-Ode\.env` from the bundled
-template and opens a dashboard. Click **Settings** to enter your
-`ANTHROPIC_API_KEY`, then **Restart**. The window will close — re-open it
-from the Start Menu (a one-click in-app reload is on the v2 list).
+The first launch takes ~3-5 s because the EXE unpacks to `%TEMP%\_MEI…`
+before starting. Subsequent launches reuse the cache where possible.
+
+Windows will show a **SmartScreen warning** on first run because the EXE is
+unsigned. Click **More info → Run anyway**.
 
 ### Building it from source
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1            # portable EXE
+powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1            # build Ayen-Ode.exe at repo root
 powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -Installer # + .exe installer
 powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -Clean     # wipe build/dist first
 ```
@@ -51,14 +56,12 @@ powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -Clean     # wipe
 The script creates a dedicated build venv at `.venv-build\`, installs
 PyInstaller + pywebview, and runs `pyinstaller ayen-ode.spec`. Output:
 
-- **Portable:** `dist\Ayen-Ode\Ayen-Ode.exe` (the whole `dist\Ayen-Ode\`
-  folder is the portable bundle — copy it anywhere).
-- **Installer:** `dist\Ayen-Ode-Setup-<version>.exe`. Requires
+- **Single-file EXE:** `Ayen-Ode.exe` at the repo root (copied from
+  `dist\Ayen-Ode.exe` after build).
+- **Installer (optional):** `dist\Ayen-Ode-Setup-<version>.exe`. Requires
   [Inno Setup 6](https://jrsoftware.org/isinfo.php). Install via
-  `winget install JRSoftware.InnoSetup`.
-
-The installer is unsigned, so Windows SmartScreen will show
-"Windows protected your PC" on first run. Click **More info → Run anyway**.
+  `winget install JRSoftware.InnoSetup`. The installer wraps the same
+  single-file EXE.
 
 ### Files the desktop app creates
 
@@ -69,17 +72,19 @@ The installer is unsigned, so Windows SmartScreen will show
 - `%APPDATA%\Ayen-Ode\app.log` — captured stdout/stderr of the current run
   (`.log.1` is the previous run). Look here if the window won't open.
 
-Uninstalling never touches `%APPDATA%\Ayen-Ode\` — your worlds are preserved.
+Deleting the EXE never touches `%APPDATA%\Ayen-Ode\` — your worlds are preserved.
 
 ### How it works
 
-`desktop_launcher.py` is the PyInstaller entry point. It picks a free port,
-seeds `%APPDATA%\Ayen-Ode\`, starts uvicorn in a thread, waits for `/health`,
-then opens a pywebview window pointed at `/desktop-bootstrap` — a one-shot
-HTML page that drops a fresh session token into `localStorage` and redirects
-to the dashboard, so the user never sees the login screen. The auth flow,
-SessionStore, and routes are unchanged; the desktop launcher just
-short-circuits the login form.
+`desktop_launcher.py` is the PyInstaller entry point. PyInstaller's onefile
+bootloader unpacks the bundle to `%TEMP%\_MEI<rand>`, sets `sys._MEIPASS`,
+and runs the launcher: it picks a free port, seeds `%APPDATA%\Ayen-Ode\`,
+starts uvicorn in a thread, waits for `/health`, then opens a pywebview
+window pointed at `/desktop-bootstrap` — a one-shot HTML page that drops a
+fresh session token into `localStorage` and redirects to the dashboard, so
+the user never sees the login screen. The auth flow, SessionStore, and
+routes are unchanged; the desktop launcher just short-circuits the login
+form.
 
 ---
 

@@ -6,8 +6,9 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -Clean
 #
 # Output:
-#   dist\Ayen-Ode\Ayen-Ode.exe                  (portable — copy folder anywhere)
-#   dist\Ayen-Ode-Setup-<version>.exe           (installer, if -Installer used)
+#   Ayen-Ode.exe                               (single-file build, copied to repo root)
+#   dist\Ayen-Ode.exe                          (the PyInstaller build artifact)
+#   dist\Ayen-Ode-Setup-<version>.exe          (installer, if -Installer used)
 #
 # Requirements (script tries to handle these for you):
 #   - Python 3.11+ on PATH
@@ -89,14 +90,19 @@ if ($LASTEXITCODE -ne 0) {
     Write-Error "PyInstaller failed"
 }
 
-$exePath = Join-Path $script:RepoRoot "dist\Ayen-Ode\Ayen-Ode.exe"
+$exePath = Join-Path $script:RepoRoot "dist\Ayen-Ode.exe"
 if (-not (Test-Path $exePath)) {
     Write-Error "Expected EXE not found at $exePath"
 }
 
+# Copy the single-file build to the repo root so a fresh clone-and-run user
+# sees Ayen-Ode.exe immediately at the top level.
+$rootExe = Join-Path $script:RepoRoot "Ayen-Ode.exe"
+Copy-Item -Force $exePath $rootExe
+
 Write-Host ""
-Write-Host "Portable build: $exePath" -ForegroundColor Green
-Write-Host "Distribution folder: $(Split-Path $exePath)" -ForegroundColor Green
+Write-Host "EXE (repo root):  $rootExe" -ForegroundColor Green
+Write-Host "EXE (build dir):  $exePath" -ForegroundColor Green
 
 # --- 5. Optional: build the installer --------------------------------------
 
