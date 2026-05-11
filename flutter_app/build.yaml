@@ -1,0 +1,9 @@
+targets:
+  $default:
+    builders:
+      json_serializable:
+        options:
+          # Server emits snake_case for every payload field.
+          # Mirror it once here so the Freezed models stay in idiomatic Dart camelCase.
+          field_rename: snake
+          explicit_to_json: true
