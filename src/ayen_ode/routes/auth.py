@@ -11,10 +11,10 @@ from pathlib import Path
 from typing import Any
 
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse, PlainTextResponse
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from starlette.routing import Route
 
-_STATIC_DIR = Path(__file__).parent.parent.parent.parent / "static"
+from .. import paths
 
 
 def _client_ip(request: Request) -> str:
@@ -29,24 +29,30 @@ def _client_ip(request: Request) -> str:
     return ip
 
 
+def _is_loopback(ip: str) -> bool:
+    return ip in {"127.0.0.1", "::1", "localhost"}
+
+
 def make_auth_routes(service: Any, settings: Any, sessions: Any) -> list:
+    static_dir = paths.static_dir()
+
     async def health(_: Any) -> PlainTextResponse:
         return PlainTextResponse("Ayen-Ode server is running.")
 
     async def serve_login(_: Any) -> FileResponse:
-        return FileResponse(_STATIC_DIR / "index.html")
+        return FileResponse(static_dir / "index.html")
 
     async def serve_dashboard(_: Any) -> FileResponse:
-        return FileResponse(_STATIC_DIR / "dashboard.html")
+        return FileResponse(static_dir / "dashboard.html")
 
     async def serve_narrative(_: Any) -> FileResponse:
-        return FileResponse(_STATIC_DIR / "narrative.html")
+        return FileResponse(static_dir / "narrative.html")
 
     async def serve_create_world(_: Any) -> FileResponse:
-        return FileResponse(_STATIC_DIR / "create-world.html")
+        return FileResponse(static_dir / "create-world.html")
 
     async def serve_debug(_: Any) -> FileResponse:
-        return FileResponse(_STATIC_DIR / "debug.html")
+        return FileResponse(static_dir / "debug.html")
 
     async def whoami_handler(request: Request) -> JSONResponse:
         raw_host = request.client.host if request.client else None
@@ -79,7 +85,7 @@ def make_auth_routes(service: Any, settings: Any, sessions: Any) -> list:
     async def settings_status_handler(_: Any) -> JSONResponse:
         # Re-read .env directly so the answer reflects the current file, not the
         # snapshot loaded at server start. Used by the dashboard banner.
-        env_path = Path(__file__).parent.parent.parent.parent / ".env"
+        env_path = paths.env_path()
         api_key = ""
         if env_path.exists():
             try:
@@ -103,26 +109,30 @@ def make_auth_routes(service: Any, settings: Any, sessions: Any) -> list:
         # desktop, so a remote client clicking this would do nothing useful and
         # could be abused to spawn subprocesses.
         ip = _client_ip(request)
-        if ip not in {"127.0.0.1", "::1", "localhost"}:
+        if not _is_loopback(ip):
             return JSONResponse({"error": "Settings window can only be opened from localhost"}, status_code=403)
         try:
             kwargs: dict[str, Any] = {
-                "cwd": str(Path(__file__).parent.parent.parent.parent),
                 "stdout": subprocess.DEVNULL,
                 "stderr": subprocess.DEVNULL,
                 "stdin": subprocess.DEVNULL,
                 "close_fds": True,
             }
             if sys.platform == "win32":
-                # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP — survives if the
-                # server restarts, no inherited console.
-                kwargs["creationflags"] = 0x00000008 | 0x00000200
+                kwargs["creationflags"] = 0x00000008 | 0x00000200  # DETACHED | NEW_PROCESS_GROUP
             else:
                 kwargs["start_new_session"] = True
-            subprocess.Popen(
-                [sys.executable, "-m", "ayen_ode.settings_window"],
-                **kwargs,
-            )
+
+            if paths.is_frozen():
+                # In a PyInstaller bundle, sys.executable IS the app EXE.
+                # Re-launch ourselves with the --settings flag (handled in desktop_launcher).
+                subprocess.Popen([sys.executable, "--settings"], **kwargs)
+            else:
+                kwargs["cwd"] = str(paths.bundle_dir())
+                subprocess.Popen(
+                    [sys.executable, "-m", "ayen_ode.settings_window"],
+                    **kwargs,
+                )
         except OSError as e:
             return JSONResponse({"error": f"Could not launch settings window: {e}"}, status_code=500)
         return JSONResponse({"ok": True})
@@ -130,10 +140,59 @@ def make_auth_routes(service: Any, settings: Any, sessions: Any) -> list:
     async def restart_handler(request: Request) -> JSONResponse:
         # Localhost-only — same policy as settings/launch.
         ip = _client_ip(request)
-        if ip not in {"127.0.0.1", "::1", "localhost"}:
+        if not _is_loopback(ip):
             return JSONResponse(
                 {"error": "Restart can only be triggered from localhost"}, status_code=403
             )
-        # Exit cleanly after a short delay so the response has time to be sent.
-        # start.bat loops on exit-code 0 and restarts the process automatically.
-   
+
+        def _delayed_exit() -> None:
+            time.sleep(0.4)
+            # Exit code 42 signals the desktop launcher (if running) to relaunch.
+            # In source mode start.bat loops on exit-code 0; we use 42 for explicit restart.
+            os._exit(42 if paths.is_frozen() else 0)
+
+        threading.Thread(target=_delayed_exit, daemon=True).start()
+        return JSONResponse({"ok": True})
+
+    async def desktop_bootstrap_handler(request: Request) -> Any:
+        """Serve a one-shot HTML page that sets the session token in localStorage
+        and redirects to the dashboard. Only available in desktop mode and only
+        accessible from loopback.
+
+        Used by the pywebview launcher so the user never sees the login screen.
+        The token is a fresh session created server-side; nothing crosses the
+        URL boundary except the HTML response.
+        """
+        if os.environ.get("AYEN_ODE_DESKTOP") != "1":
+            return PlainTextResponse("Not in desktop mode", status_code=404)
+        if not _is_loopback(_client_ip(request)):
+            return PlainTextResponse("Forbidden", status_code=403)
+        token = sessions.create()
+        # token is hex from secrets.token_hex(32) — safe to inline without escaping.
+        html = (
+            "<!doctype html><html><head><meta charset=\"utf-8\"><title>Ayen-Ode</title>"
+            "<style>html,body{margin:0;background:#0f172a;color:#94a3b8;"
+            "font-family:Segoe UI,system-ui,sans-serif;height:100%;"
+            "display:flex;align-items:center;justify-content:center;}</style></head>"
+            "<body><div>Loading Ayen-Ode…</div><script>"
+            f"try{{localStorage.setItem('apiKey','{token}');}}catch(e){{}}"
+            "location.replace('/dashboard.html');"
+            "</script></body></html>"
+        )
+        return HTMLResponse(html)
+
+    return [
+        Route("/health", health, methods=["GET"]),
+        Route("/", serve_login, methods=["GET"]),
+        Route("/dashboard.html", serve_dashboard, methods=["GET"]),
+        Route("/narrative.html", serve_narrative, methods=["GET"]),
+        Route("/create-world.html", serve_create_world, methods=["GET"]),
+        Route("/debug.html", serve_debug, methods=["GET"]),
+        Route("/desktop-bootstrap", desktop_bootstrap_handler, methods=["GET"]),
+        Route("/api/whoami", whoami_handler, methods=["GET"]),
+        Route("/api/login", login_handler, methods=["POST"]),
+        Route("/api/logout", logout_handler, methods=["POST"]),
+        Route("/api/settings/status", settings_status_handler, methods=["GET"]),
+        Route("/api/settings/launch", settings_launch_handler, methods=["POST"]),
+        Route("/api/restart", restart_handler, methods=["POST"]),
+    ]

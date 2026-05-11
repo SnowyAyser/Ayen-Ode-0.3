@@ -16,6 +16,7 @@ from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Mount
 from starlette.staticfiles import StaticFiles
 
+from . import paths
 from .config import load_settings
 from .narrative import investigate_entity
 from .routes import make_all_routes
@@ -82,9 +83,12 @@ sessions = SessionStore(settings.db_path)
 
 # --- App Assembly ---
 
-_PUBLIC_PATHS = {"/", "/health", "/dashboard.html", "/narrative.html", "/create-world.html", "/debug.html"}
+_PUBLIC_PATHS = {
+    "/", "/health", "/dashboard.html", "/narrative.html", "/create-world.html",
+    "/debug.html", "/desktop-bootstrap",
+}
 
-static_dir = Path(__file__).parent.parent.parent / "static"
+static_dir = paths.static_dir()
 
 starlette_app = Starlette(
     routes=make_all_routes(service, settings, sessions) + [
@@ -202,11 +206,15 @@ def main() -> None:
     worker_thread = threading.Thread(target=investigation_worker, daemon=True)
     worker_thread.start()
 
+    # Reload is force-disabled in frozen builds (PyInstaller bundles can't
+    # re-exec a Python script for the reloader child process).
+    reload_enabled = (not paths.is_frozen()) and os.getenv("AYEN_ODE_RELOAD", "1") == "1"
+
     uvicorn.run(
         "ayen_ode.server:app",
         host=settings.host,
         port=settings.port,
-        reload=os.getenv("AYEN_ODE_RELOAD", "1") == "1",
+        reload=reload_enabled,
         reload_dirs=[str(Path(__file__).resolve().parent)],
         proxy_headers=True,
         forwarded_allow_ips="*",

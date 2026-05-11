@@ -20,6 +20,13 @@ dependencies = [
 dev = [
   "pytest>=8,<9",
 ]
+desktop = [
+  "pywebview>=5,<6",
+]
+build = [
+  "pywebview>=5,<6",
+  "pyinstaller>=6.10,<7",
+]
 
 [project.scripts]
 ayen-ode = "ayen_ode.server:main"
@@ -28,4 +35,4 @@ ayen-ode = "ayen_ode.server:main"
 where = ["src"]
 
 [tool.pytest.ini_options]
-testpaths 
+testpaths = ["tests"] 

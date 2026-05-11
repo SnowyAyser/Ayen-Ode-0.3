@@ -14,7 +14,15 @@ import os
 from dotenv import load_dotenv
 from anthropic import Anthropic
 
-load_dotenv()
+from . import paths
+
+# Seed %APPDATA%/Ayen-Ode/.env from the bundled .env.example on first run (frozen
+# builds), then point dotenv at the user-writable .env regardless of cwd.
+paths.ensure_user_dir()
+load_dotenv(paths.env_path(), override=False)
+# Fall back to dotenv's cwd-based search too, so devs running `python -m ayen_ode`
+# from anywhere still pick up a project-root .env.
+load_dotenv(override=False)
 
 # ---------------------------------------------------------------------------
 # Model constants
@@ -27,6 +35,7 @@ SONNET_MODEL = "claude-sonnet-4-6"
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
 
 # config.py lives at src/ayen_ode/config.py -- three parents up is the project root
+# (kept for source-mode parity; frozen builds resolve paths via paths.py instead).
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
@@ -53,13 +62,9 @@ def load_settings() -> Settings:
     # native settings window can be launched. Narrative calls will fail with
     # an Anthropic auth error until a real key is saved + server restarted.
 
-    db_path_raw = os.getenv("AYEN_ODE_DB_PATH", "")
-    if db_path_raw:
-        db_path = Path(db_path_raw)
-        if not db_path.is_absolute():
-            db_path = (_PROJECT_ROOT / db_path).resolve()
-    else:
-        db_path = _PROJECT_ROOT / "data" / "ayen_ode.db"
+    # In frozen (desktop) builds the DB lives in %APPDATA%/Ayen-Ode/data/.
+    # In source mode it stays at <repo>/data/ — same as before.
+    db_path = paths.db_path_default()
 
     host = os.getenv("AYEN_ODE_HOST", "0.0.0.0")
     port = int(os.getenv("PORT", os.getenv("AYEN_ODE_PORT", "8000")))

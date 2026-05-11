@@ -14,9 +14,13 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-ENV_PATH = PROJECT_ROOT / ".env"
-ENV_EXAMPLE_PATH = PROJECT_ROOT / ".env.example"
+from . import paths
+
+# In frozen mode these resolve under %APPDATA%/Ayen-Ode/. In source mode they
+# resolve to the repo root, matching the original behaviour.
+paths.ensure_user_dir()
+ENV_PATH = paths.env_path()
+ENV_EXAMPLE_PATH = paths.env_example_path()
 
 EDITABLE_KEYS = [
     ("ANTHROPIC_API_KEY", "Anthropic API key", "Required. Starts with sk-ant-…", True),
