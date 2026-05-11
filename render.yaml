@@ -1,0 +1,14 @@
+﻿services:
+  - type: web
+    name: ayen-ode
+    runtime: python
+    plan: starter
+    buildCommand: pip install -e .
+    startCommand: uvicorn ayen_ode.server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: AYEN_ODE_DB_PATH
+        value: /var/data/ayen_ode.db
+    disk:
+      name: ayen-ode-data
+      mountPath: /var/data
+      sizeGB: 1

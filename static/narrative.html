@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ayen-Ode - Narrative</title>
+  <!-- Run BEFORE any other resource so the entrance overlay paints on the first frame.
+       Sets html.entering based on URL flags or sessionStorage handoff from the dashboard. -->
+  <script>
+    (function() {
+      try {
+        var p = new URLSearchParams(window.location.search);
+        if (
+          p.get('fresh') === '1' ||
+          p.get('replay_intro') === '1' ||
+          sessionStorage.getItem('worldEntering') === '1' ||
+          sessionStorage.getItem('replayIntro') === '1'
+        ) {
+          document.documentElement.classList.add('entering');
+        }
+      } catch (e) {}
+    })();
+  </script>
+  <!-- When entering: paint solid pure black on top of the page from the very
+       first frame. The dashboard ends on the same pure black, so the navigation
+       seam happens between two identical black frames — no flicker. The black
+       layer then fades out via CSS animation, revealing the entrance overlay. -->
+  <style>
+    html.entering, html.entering body {
+      background: #000 !important;
+    }
+    #navBlackout {
+      position: fixed; inset: 0; z-index: 250;
+      background: #000; pointer-events: none;
+      opacity: 0;
+    }
+    @keyframes navBlackoutFade {
+      0%   { opacity: 1; }
+      30%  { opacity: 1; }
+      100% { opacity: 0; }
+    }
+    html.entering #navBlackout {
+      animation: navBlackoutFade 800ms ease-out 100ms both;
+    }
+  </style>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Investigation panel drop-from-top animation */
+    #investigationPanel {
+      transform: translateY(-110%);
+      transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    #investigationPanel.panel-open {
+      transform: translateY(0);
+    }
+
+    /* Investigate keyword button glow */
+    .investigate-btn:hover {
+      text-shadow: 0 0 10px rgba(251, 191, 36, 0.5);
+    }
+
+    /* Thin scrollbars */
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.35); border-radius: 2px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, 0.6); }
+
+    /* Narrative paragraph spacing */
+    #narrativeContent .narrative-block p + p { margin-top: 0.75rem; }
+
+    /* Horizontal card scroll - hide scrollbar but keep functionality */
+    #investigationQueue::-webkit-scrollbar { height: 3px; }
+    #investigationQueue::-webkit-scrollbar-thumb { background: rgba(180, 120, 40, 0.3); }
+
+    /* Entity detail panel slide-up */
+    #entityDetailPane { transition: height 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+
+    /* Selected card highlight */
+    .is-selected > button:first-child { background: rgba(30, 41, 59, 0.8); }
+    .is-selected .entity-dot { opacity: 1 !important; }
+
+    /* Quest panel */
+    .quest-tier-label {
+      font-size: 0.6rem; font-weight: 800; text-transform: uppercase;
+      letter-spacing: 0.1em; color: #64748b;
+    }
+    .quest-tag-done {
+      display: inline-block; font-size: 0.6rem; font-weight: 600;
+      padding: 1px 5px; border-radius: 999px;
+      background: rgba(124,101,247,0.15); color: #a78bfa;
+    }
+    .quest-progress-bar {
+      height: 2px; border-radius: 1px; background: rgba(100,116,139,0.2);
+    }
+    .quest-progress-fill {
+      height: 100%; border-radius: 1px; background: #7c65f7;
+      transition: width 0.4s ease;
+    }
+    .quest-thread-btn {
+      font-size: 0.6rem; font-weight: 700; padding: 2px 6px;
+      border-radius: 4px; cursor: pointer; border: 1px solid;
+      transition: background 0.12s, color 0.12s;
+    }
+    .quest-thread-btn-track {
+      border-color: rgba(124,101,247,0.5); color: #a78bfa;
+      background: rgba(124,101,247,0.08);
+    }
+    .quest-thread-btn-track:hover { background: rgba(124,101,247,0.2); }
+    .quest-thread-btn-dismiss {
+      border-color: rgba(100,116,139,0.3); color: #64748b;
+      background: transparent;
+    }
+    .quest-thread-btn-dismiss:hover { color: #94a3b8; border-color: rgba(100,116,139,0.5); }
+    #questPanelToggle { transition: transform 0.2s; }
+    #questPanelToggle.open { transform: rotate(180deg); }
+
+    /* Quick-action chips */
+    .quick-chip {
+      font-size: 0.7rem;
+      padding: 2px 9px;
+      border-radius: 9999px;
+      background: rgba(30, 41, 59, 0.6);
+      border: 1px solid rgba(100, 116, 139, 0.25);
+      color: rgb(148, 163, 184);
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+      white-space: nowrap;
+    }
+    .quick-chip:hover {
+      background: rgba(51, 65, 85, 0.8);
+      border-color: rgba(100, 116, 139, 0.5);
+      color: rgb(203, 213, 225);
+    }
+
+    /* Skip-time preset buttons */
+    .skip-preset-btn {
+      display: block;
+      width: 100%;
+      font-size: 0.7rem;
+      padding: 4px 8px;
+      border-radius: 6px;
+      background: rgba(30, 41, 59, 0.8);
+      border: 1px solid rgba(100, 116, 139, 0.2);
+      color: rgb(148, 163, 184);
+      cursor: pointer;
+      text-align: left;
+      transition: background 0.15s, color 0.15s;
+    }
+    .skip-preset-btn:hover {
+      background: rgba(51, 65, 85, 0.9);
+      color: rgb(203, 213, 225);
+    }
+
+    /* World entrance overlay is unused — the page goes straight from the solid
+       black blackout to the live narrative, with no intermediate title screen. */
+    #worldEnterOverlay { display: none !important; }
+
+    /* --- Opening scene reveal (typewriter on first paragraph, stagger-fade for rest) --- */
+    .intro-line { opacity: 0; transform: translateY(8px); }
+    .intro-line.show {
+      opacity: 1; transform: translateY(0);
+      transition: opacity 700ms ease-out, transform 700ms ease-out;
+    }
+    .intro-typewriter { border-right: 2px solid rgba(252,211,77,0.7); padding-right: 2px; }
+    .intro-typewriter.done { border-right-color: transparent; transition: border-right-color 800ms ease-out 300ms; }
+
+    #introSkipBtn {
+      position: fixed; top: 1.5rem; right: 1.5rem; z-index: 60;
+      background: rgba(30,41,59,0.85); color: rgb(148,163,184);
+      border: 1px solid rgba(100,116,139,0.4); border-radius: 9999px;
+      padding: 0.4rem 1rem; font-size: 0.75rem; letter-spacing: 0.05em;
+      cursor: pointer; backdrop-filter: blur(8px);
+      transition: color 0.15s, border-color 0.15s;
+    }
+    #introSkipBtn:hover { color: #fde68a; border-color: rgba(180,83,9,0.6); }
+
+    #introReplayBadge {
+      position: fixed; top: 1.5rem; left: 50%; transform: translateX(-50%); z-index: 60;
+      background: rgba(15,23,42,0.92); backdrop-filter: blur(8px);
+      border: 1px solid rgba(180,83,9,0.4); color: #fde68a;
+      padding: 0.35rem 0.9rem; border-radius: 9999px;
+      font-size: 0.7rem; letter-spacing: 0.15em; text-transform: uppercase;
+      box-shadow: 0 6px 20px -6px rgba(0,0,0,0.6);
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-white h-screen overflow-hidden flex flex-col">
+
+  <!-- World entrance overlay (only shown when arriving with ?fresh=1 — gated by html.entering CSS) -->
+  <div id="worldEnterOverlay">
+    <div id="worldEnterClover"></div>
+    <div id="worldEnterTitle"></div>
+  </div>
+
+  <!-- Solid-black blackout layer that covers the page on the first frame and
+       fades out (CSS animation), masking any flicker at the navigation seam. -->
+  <div id="navBlackout"></div>
+
+  <!-- Hover trigger strip at very top (always visible, z above panel) -->
+  <div
+    id="panelTriggerZone"
+    class="fixed top-0 left-0 right-0 h-1.5 z-50 bg-amber-600/30 hover:bg-amber-500/50 cursor-pointer transition-colors duration-200"
+    onmouseenter="openInvestigationPanel()"
+    title="Investigations"
+  ></div>
+
+  <!-- Header -->
+  <header class="flex-none bg-slate-900 border-b border-slate-800 px-6 py-4">
+    <div class="max-w-7xl mx-auto flex justify-between items-center">
+      <div>
+        <h1 id="worldName" class="text-2xl font-bold tracking-tight text-slate-100">Loading...</h1>
+        <p id="worldPremise" class="text-slate-500 text-sm mt-0.5"></p>
+      </div>
+      <div class="flex gap-2 items-center">
+        <!-- Investigation points pill -->
+        <div class="flex items-center gap-1.5 bg-amber-950/60 border border-amber-800/50 text-amber-300 px-3 py-1.5 rounded-full text-sm font-mono tracking-tight">
+          <svg class="w-3.5 h-3.5 opacity-70 flex-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          <span id="investigationPoints">5/5</span>
+        </div>
+        <button onclick="window.location.href='/dashboard.html'" class="bg-slate-800 hover:bg-slate-700 border border-slate-700/60 hover:border-slate-600 px-3 py-1.5 rounded-md text-sm text-slate-300 hover:text-slate-100 transition-colors duration-150">
+          Home
+        </button>
+        <button onclick="logout()" class="bg-red-950/60 hover:bg-red-900/80 border border-red-900/50 hover:border-red-800 px-3 py-1.5 rounded-md text-sm text-red-400 hover:text-red-300 transition-colors duration-150">
+          Logout
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main layout -->
+  <main id="mainContent" class="flex-1 overflow-hidden max-w-7xl mx-auto w-full flex gap-4 p-4">
+
+    <!-- Narrative Area -->
+    <div class="flex-1 flex flex-col bg-slate-900 rounded-xl border border-slate-800 overflow-hidden shadow-xl shadow-black/20">
+
+      <!-- Conversation Display -->
+      <div id="narrativeContent" class="flex-1 overflow-y-auto p-6 space-y-5">
+        <div class="text-slate-600 text-center py-12 flex flex-col items-center gap-4">
+          <div data-clover data-size="60" data-hue="142"></div>
+          <p>Loading world…</p>
+        </div>
+      </div>
+
+      <!-- Input Area -->
+      <div class="flex-none border-t border-slate-800 p-4 bg-slate-950/40">
+        <!-- Quick-action chips -->
+        <div class="flex gap-1.5 flex-wrap mb-2.5">
+          <button type="button" onclick="quickAction('Look around')" class="quick-chip">Look around</button>
+          <button type="button" onclick="quickAction('Wait and listen')" class="quick-chip">Wait</button>
+          <button type="button" onclick="quickAction('Examine ')" class="quick-chip">Examine…</button>
+          <button type="button" onclick="quickAction('Speak to ')" class="quick-chip">Speak…</button>
+          <button type="button" onclick="quickAction('Search ')" class="quick-chip">Search…</button>
+        </div>
+
+        <form id="actionForm" class="flex gap-2 items-end">
+          <textarea
+            id="actionInput"
+            placeholder="What do you do?"
+            autocomplete="off"
+            class="flex-1 bg-slate-800 border border-slate-700/70 rounded-lg px-4 py-2.5 text-white placeholder-slate-600 focus:outline-none focus:border-amber-600/60 focus:bg-slate-800/80 transition-colors resize-none leading-6"
+            style="min-height:44px;overflow-y:hidden"
+          ></textarea>
+          <!-- Act button column: time label sits directly above the button -->
+          <div class="relative flex flex-col items-stretch gap-1 flex-none">
+            <!-- Time bar: always in DOM, label populated once time > 0 -->
+            <div id="timeBar" class="flex items-center justify-end gap-1.5 text-xs text-slate-600 h-4 min-w-[80px]">
+              <span id="gameTimeLabel" class="truncate text-right flex-1 leading-none"></span>
+              <button id="skipTimeBtn" type="button" onclick="showSkipPicker()" title="Skip time"
+                class="hidden text-slate-700 hover:text-slate-400 transition-colors flex-none leading-none">↷</button>
+            </div>
+            <!-- Skip-time popover (anchored above the Act button column) -->
+            <div id="skipPickerPopover"
+              class="hidden absolute bottom-full mb-1 right-0 bg-slate-900 border border-slate-700 rounded-lg p-2.5 shadow-xl z-10 min-w-[110px] space-y-1">
+              <p class="text-xs text-slate-500 font-semibold mb-1.5">Skip time</p>
+              <button type="button" onclick="doSkipTime(3600)"  class="skip-preset-btn">1 hour</button>
+              <button type="button" onclick="doSkipTime(14400)" class="skip-preset-btn">4 hours</button>
+              <button type="button" onclick="doSkipTime(28800)" class="skip-preset-btn">Rest (8h)</button>
+              <button type="button" onclick="doSkipTime(86400)" class="skip-preset-btn">1 day</button>
+              <button type="button" onclick="cancelSkipPicker()"
+                class="text-xs text-slate-600 hover:text-slate-400 transition-colors mt-1 w-full text-center">Cancel</button>
+            </div>
+            <button
+              type="submit"
+              id="submitBtn"
+              class="bg-amber-800 hover:bg-amber-700 border border-amber-700/50 px-6 py-2.5 rounded-lg font-medium text-amber-100 transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Act
+            </button>
+          </div>
+        </form>
+
+        <!-- Hint row + settings -->
+        <div class="relative flex justify-between items-center mt-2">
+          <div class="flex items-center gap-2">
+            <p id="inputHintText" class="text-xs text-slate-700">Enter to send · Shift+Enter for new line</p>
+            <span id="charCount" class="text-xs text-slate-700 hidden font-mono tabular-nums"></span>
+          </div>
+          <button id="settingsBtn" type="button" title="Settings"
+            class="text-slate-700 hover:text-slate-400 transition-colors text-xs leading-none select-none">⚙</button>
+          <!-- Settings popover -->
+          <div id="settingsPopover"
+            class="hidden absolute bottom-full mb-2 right-0 bg-slate-900 border border-slate-700 rounded-lg p-3 shadow-xl z-50 min-w-[210px]">
+            <p class="text-xs text-slate-500 uppercase tracking-widest mb-2.5 font-semibold">Input settings</p>
+            <div class="flex items-center justify-between gap-3">
+              <span class="text-xs text-slate-300">Confirm before sending</span>
+              <button id="confirmToggle" type="button"
+                class="relative inline-flex h-5 w-9 items-center rounded-full bg-slate-600 transition-colors focus:outline-none flex-none">
+                <span class="inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform translate-x-1"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quest Tracker Panel -->
+    <aside id="questPanel" class="w-72 flex-none flex flex-col bg-slate-900 rounded-xl border border-slate-800 shadow-xl shadow-black/20 overflow-hidden" style="max-height: fit-content;">
+      <!-- Header (clickable to collapse) -->
+      <button id="questPanelHeader" onclick="toggleQuestPanel()"
+        class="flex-none border-b border-slate-800 px-4 py-3 flex items-center gap-2.5 w-full text-left hover:bg-slate-800/40 transition-colors">
+        <div class="w-0.5 h-4 bg-purple-600 rounded-full flex-none"></div>
+        <h2 class="font-semibold text-slate-200 text-sm tracking-wide flex-1">Current Goals</h2>
+        <svg id="questPanelToggle" class="w-3.5 h-3.5 text-slate-600 open" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
+        </svg>
+      </button>
+      <!-- Quest list body -->
+      <div id="questPanelBody" class="overflow-y-auto" style="max-height: 420px;">
+        <div class="px-4 py-4 text-xs text-slate-600 text-center">Loading goals…</div>
+      </div>
+    </aside>
+
+    <!-- Compendium Sidebar -->
+    <aside class="w-72 flex-none flex flex-col bg-slate-900 rounded-xl border border-slate-800 overflow-hidden shadow-xl shadow-black/20">
+      <div class="flex-none border-b border-slate-800 px-4 py-3 flex items-center gap-2.5">
+        <div class="w-0.5 h-4 bg-amber-600 rounded-full flex-none"></div>
+        <h2 class="font-semibold text-slate-200 text-sm tracking-wide">Compendium</h2>
+      </div>
+
+      <!-- Search bar -->
+      <div class="flex-none px-3 py-2 border-b border-slate-800/60">
+        <input
+          id="compendiumSearch"
+          type="text"
+          placeholder="Search…"
+          class="w-full bg-slate-800/80 border border-slate-700/50 rounded-md px-2.5 py-1.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-amber-600/50 transition-colors"
+        />
+      </div>
+
+      <!-- Entity list (always visible, top pane) -->
+      <div id="entityListView" class="flex-1 min-h-0 overflow-y-auto p-2 space-y-0.5">
+        <div class="flex items-center gap-2 text-slate-600 text-xs px-2 py-3">
+          <div data-clover data-size="24" data-hue="142"></div>
+          <span>Loading world…</span>
+        </div>
+      </div>
+
+      <!-- Entity detail panel (bottom pane, slides up on select) -->
+      <div id="entityDetailPane" class="flex-none border-t border-slate-800 overflow-hidden" style="height:0">
+        <div class="flex items-center gap-1.5 px-2 py-2.5 border-b border-slate-800/60 bg-slate-900/80">
+          <button id="detailBackBtn" onclick="goBackDetail()" class="hidden text-slate-600 hover:text-slate-300 flex-none p-1 rounded hover:bg-slate-800 transition-colors">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+            </svg>
+          </button>
+          <div class="min-w-0 flex-1">
+            <p id="detailEntityName" class="text-sm font-semibold text-slate-100 truncate"></p>
+            <p id="detailEntityType" class="text-xs text-slate-500 mt-0.5"></p>
+          </div>
+          <button onclick="closeEntityDetail()" class="text-slate-600 hover:text-slate-300 flex-none p-1 rounded hover:bg-slate-800 transition-colors">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        <div id="detailEntityContent" class="overflow-y-auto p-3 text-xs space-y-1.5" style="height:calc(100% - 48px)"></div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- Investigation Panel (drops from top) -->
+  <div id="investigationPanel" class="fixed top-0 left-0 right-0 z-40 bg-slate-950 border-b border-amber-900/40 shadow-2xl shadow-black/60" onmouseleave="schedulePanelClose()" onmouseenter="cancelPanelClose()">
+    <div class="max-w-7xl mx-auto">
+      <!-- Panel header row -->
+      <div class="flex items-center justify-between px-6 pt-3 pb-2 border-b border-slate-800/60">
+        <div class="flex items-center gap-2">
+          <svg class="w-4 h-4 text-amber-500 flex-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          <h3 class="font-semibold text-slate-200 text-sm">Investigations</h3>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="clearCompletedBtn" onclick="clearCompletedInvestigations()" class="hidden text-xs text-slate-500 hover:text-slate-200 px-2.5 py-1 rounded-md hover:bg-slate-800 border border-slate-700/50 hover:border-slate-600 transition-colors">
+            Clear completed
+          </button>
+          <button onclick="forceCloseInvestigationPanel()" class="text-slate-600 hover:text-slate-300 p-1 rounded-md hover:bg-slate-800 transition-colors">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+        </div>
+      </div>
+      <!-- Horizontal card scroll -->
+      <div id="investigationQueue" class="flex gap-3 overflow-x-auto px-6 py-4 min-h-[116px] items-start">
+        <p class="text-slate-600 text-sm self-center">No active investigations</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Investigation Confirmation Dialog -->
+  <div id="confirmInvestigationDialog" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
+    <div class="bg-slate-900 rounded-xl max-w-sm w-full mx-4 border border-slate-700 shadow-2xl">
+      <div class="px-6 py-4 border-b border-slate-800">
+        <h3 class="font-semibold text-slate-100">Investigate: <span id="confirmItemName" class="text-amber-300"></span></h3>
+      </div>
+      <div class="p-6">
+        <p class="text-slate-300 text-sm mb-2">
+          Spend <span id="confirmCost" class="font-semibold text-amber-300">1</span> investigation point to dig deeper.
+        </p>
+        <p class="text-slate-600 text-xs">The point is refunded when you review the findings.</p>
+      </div>
+      <div class="px-6 py-3 border-t border-slate-800 flex justify-end gap-2">
+        <button onclick="cancelInvestigation()" class="text-slate-500 hover:text-slate-200 text-sm px-4 py-2 rounded-md hover:bg-slate-800 transition-colors">
+          Cancel
+        </button>
+        <button onclick="confirmInvestigationStart()" class="bg-amber-700 hover:bg-amber-600 text-white text-sm px-4 py-2 rounded-md transition-colors font-medium">
+          Investigate
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Investigation retry toast (briefly flashes when a failed investigation auto-retries) -->
+  <div id="investigationToast" class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-800 border border-amber-700/60 text-slate-200 text-sm px-4 py-2.5 rounded-lg shadow-xl z-50 flex items-center gap-2 pointer-events-none">
+    <svg class="w-4 h-4 text-amber-400 flex-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" str

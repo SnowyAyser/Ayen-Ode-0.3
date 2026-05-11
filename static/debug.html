@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dev Debug — Ayen Ode</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(100,116,139,0.35); border-radius: 2px; }
+  </style>
+</head>
+<body class="bg-slate-950 min-h-screen text-white">
+
+<!-- ═══════════════════════════════ STICKY HEADER ═══════════════════════════════ -->
+<div class="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-sm border-b border-slate-800">
+  <div class="max-w-[1400px] mx-auto px-6">
+
+    <!-- title row -->
+    <div class="flex items-center justify-between py-3 border-b border-slate-800/60">
+      <div class="flex items-center gap-3">
+        <div class="w-1 h-5 bg-amber-600 rounded-full"></div>
+        <span class="text-sm font-semibold text-slate-200 uppercase tracking-widest">Dev Debug</span>
+        <span class="text-slate-700">·</span>
+        <span id="world-name" class="text-sm text-slate-500 italic">no active world</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <div id="poll-dot" class="w-1.5 h-1.5 rounded-full bg-slate-700 transition-colors duration-200"></div>
+        <span class="text-xs text-slate-600">2s poll</span>
+      </div>
+    </div>
+
+    <!-- metric cards -->
+    <div class="grid grid-cols-4 gap-3 py-3">
+      <div class="bg-slate-900 border border-slate-800 rounded-lg px-4 py-2.5">
+        <div id="m-entities" class="text-xl font-bold text-slate-100">—</div>
+        <div class="text-[10px] uppercase tracking-widest text-slate-600 mt-0.5">Entities</div>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-lg px-4 py-2.5">
+        <div id="m-locations" class="text-xl font-bold text-teal-400">—</div>
+        <div class="text-[10px] uppercase tracking-widest text-slate-600 mt-0.5">Locations</div>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-lg px-4 py-2.5">
+        <div id="m-knowledge" class="text-xl font-bold text-purple-400">—</div>
+        <div class="text-[10px] uppercase tracking-widest text-slate-600 mt-0.5">Knowledge Links</div>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-lg px-4 py-2.5">
+        <div id="m-consequences" class="text-xl font-bold text-amber-400">—</div>
+        <div class="text-[10px] uppercase tracking-widest text-slate-600 mt-0.5">Consequences</div>
+      </div>
+    </div>
+
+    <!-- tab bar -->
+    <div class="flex gap-1">
+      <button id="tab-btn-entities"     onclick="switchTab('entities')"     class="tab-btn px-4 py-2 text-sm font-medium rounded-t-md transition-colors">Entities</button>
+      <button id="tab-btn-containment"  onclick="switchTab('containment')"  class="tab-btn px-4 py-2 text-sm font-medium rounded-t-md transition-colors">Containment</button>
+      <button id="tab-btn-knowledge"    onclick="switchTab('knowledge')"    class="tab-btn px-4 py-2 text-sm font-medium rounded-t-md transition-colors">Knowledge</button>
+      <button id="tab-btn-consequence"  onclick="switchTab('consequence')"  class="tab-btn px-4 py-2 text-sm font-medium rounded-t-md transition-colors">Consequence</button>
+      <button id="tab-btn-live"         onclick="switchTab('live')"         class="tab-btn px-4 py-2 text-sm font-medium rounded-t-md transition-colors">
+        Live Feed
+        <span id="live-count" class="ml-1.5 px-1.5 py-0.5 text-[10px] rounded-full bg-slate-800 text-slate-500">0</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════ TAB CONTENT ═══════════════════════════════ -->
+<div class="max-w-[1400px] mx-auto px-6 py-5">
+
+  <!-- ENTITIES -->
+  <div id="panel-entities" class="tab-panel">
+    <div class="flex gap-3 mb-5">
+      <input type="text" id="entity-search" placeholder="Search by name…" oninput="onEntitySearch()"
+        class="flex-1 bg-slate-800 border border-slate-700/70 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-amber-600/60 transition-colors">
+      <select id="entity-type-filter" onchange="onEntityTypeChange()"
+        class="bg-slate-800 border border-slate-700/70 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-600/60 transition-colors">
+        <option value="">All types</option>
+        <option value="character">Characters</option>
+        <option value="location">Locations</option>
+        <option value="object">Objects</option>
+        <option value="event">Events</option>
+      </select>
+    </div>
+    <div id="entity-grid"></div>
+    <div id="entity-detail" class="hidden"></div>
+  </div>
+
+  <!-- CONTAINMENT -->
+  <div id="panel-containment" class="tab-panel hidden">
+    <div id="containment-tree"></div>
+  </div>
+
+  <!-- KNOWLEDGE -->
+  <div id="panel-knowledge" class="tab-panel hidden">
+    <div class="flex gap-3 mb-5">
+      <input type="text" id="knowledge-search" placeholder="Filter by name…" oninput="renderKnowledgeTable()"
+        class="flex-1 bg-slate-800 border border-slate-700/70 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-amber-600/60 transition-colors">
+      <select id="knowledge-degree" onchange="renderKnowledgeTable()"
+        class="bg-slate-800 border border-slate-700/70 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-600/60 transition-colors">
+        <option value="">All degrees</option>
+        <option value="deeply_knows">Deeply Knows</option>
+        <option value="witnessed">Witnessed</option>
+        <option value="secondhand">Secondhand</option>
+        <option value="heard_rumor">Heard Rumor</option>
+        <option value="fabricated">Fabricated</option>
+        <option value="unaware">Unaware</option>
+      </select>
+    </div>
+    <div id="knowledge-table"></div>
+  </div>
+
+  <!-- CONSEQUENCE -->
+  <div id="panel-consequence" class="tab-panel hidden">
+    <div id="consequence-list"></div>
+  </div>
+
+  <!-- LIVE FEED -->
+  <div id="panel-live" class="tab-panel hidden">
+    <div id="live-feed" class="font-mono text-xs space-y-0.5"></div>
+  </div>
+
+</div>
+
+<script src="/static/app.js"></script>
+<script src="/static/debug.js"></script>
+<script src="/static/debug-panels.js"></script>
+<script>
+// Legacy inline block — all code moved to external JS files
+void 0;
+</script>
+</body>
+</html>

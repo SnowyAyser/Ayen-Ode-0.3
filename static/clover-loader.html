@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Clover Loader</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0f0f1a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+  }
+</style>
+</head>
+<body>
+<canvas id="c" width="220" height="220"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+
+const W  = 220, H  = 220;
+const cx = W / 2, cy = H / 2;
+
+// Tuning
+const SCALE      = 72;      // leaf radius
+const TRAIL_SPAN = 1.82 * Math.PI; // portion of 2π shown — ~91%, tail fades before closing
+const SEGMENTS   = 320;     // trail resolution
+const SPEED      = 0.016;   // radians per frame (~60fps)
+const LINE_W     = 3.2;
+const DOT_R      = 5;
+
+// Clover green
+const CR = 68, CG = 214, CB = 104;
+
+let angle = 0;
+
+// 4-leaf rose: r = cos(2θ).  Negative r flips through origin, naturally
+// drawing all four lobes (right, bottom, left, top) as θ sweeps 0→2π.
+function pt(theta) {
+  const r = Math.cos(2 * theta) * SCALE;
+  return [cx + r * Math.cos(theta), cy + r * Math.sin(theta)];
+}
+
+function frame() {
+  ctx.clearRect(0, 0, W, H);
+
+  ctx.lineCap  = 'round';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = LINE_W;
+
+  // --- Trail: draw segments from tail → head ---
+  for (let i = 0; i < SEGMENTS; i++) {
+    const prog = i / SEGMENTS;       // 0 = tail, 1 = head
+    const next = (i + 1) / SEGMENTS;
+
+    const t1 = angle - TRAIL_SPAN + prog * TRAIL_SPAN;
+    const t2 = angle - TRAIL_SPAN + next * TRAIL_SPAN;
+
+    const [x1, y1] = pt(t1);
+    const [x2, y2] = pt(t2);
+
+    // Fade curve: sharp near head, falls off quickly at tail
+    const alpha = Math.pow(prog, 1.6) * 0.88;
+
+    // Glow only on the bright leading quarter
+    if (prog > 0.75) {
+      const glowStrength = (prog - 0.75) / 0.25;
+      ctx.shadowColor = `rgba(${CR},${CG},${CB},${glowStrength * 0.55})`;
+      ctx.shadowBlur  = 10;
+    } else {
+      ctx.shadowBlur = 0;
+    }
+
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.strokeStyle = `rgba(${CR},${CG},${CB},${alpha})`;
+    ctx.stroke();
+  }
+
+  // --- Dot at head ---
+  const [hx, hy] = pt(angle);
+
+  ctx.shadowBlur  = 22;
+  ctx.shadowColor = 'rgba(190, 255, 210, 0.9)';
+
+  ctx.beginPath();
+  ctx.arc(hx, hy, DOT_R, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgb(215, 255, 228)';
+  ctx.fill();
+
+  // Bright core
+  ctx.shadowBlur = 0;
+  ctx.beginPath();
+  ctx.arc(hx, hy, DOT_R * 0.45, 0, Math.PI * 2);
+  ctx.fillStyle = 'white';
+  ctx.fill();
+
+  angle += SPEED;
+
+  requestAnimationFrame(frame);
+}
+
+frame();
+</script>
+</body>
+</html>

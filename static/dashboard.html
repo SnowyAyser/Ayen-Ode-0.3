@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ayen-Ode Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(100,116,139,0.35); border-radius: 2px; }
+
+    /* Cinematic entrance */
+    #entranceOverlay {
+      position: fixed; inset: 0; z-index: 100;
+      background: radial-gradient(ellipse at center, #1e293b 0%, #020617 70%);
+      display: flex; align-items: center; justify-content: center;
+      transition: opacity 600ms ease-out;
+    }
+    #entranceOverlay.fading { opacity: 0; pointer-events: none; }
+    #entranceTitle {
+      position: absolute; bottom: 28%; left: 0; right: 0; text-align: center;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      letter-spacing: 0.3em; text-transform: uppercase;
+      color: #fcd34d; font-size: 0.75rem; font-weight: 600;
+      opacity: 0; transition: opacity 700ms ease-out 250ms;
+    }
+    #entranceOverlay.show-title #entranceTitle { opacity: 0.9; }
+
+    .stagger-in { opacity: 0; transform: translateY(12px); }
+    .stagger-in.go {
+      opacity: 1; transform: translateY(0);
+      transition: opacity 500ms ease-out, transform 500ms ease-out;
+    }
+
+    @keyframes welcomeIn {
+      0%   { opacity: 0; transform: translate(-50%, -8px); }
+      15%  { opacity: 1; transform: translate(-50%, 0); }
+      85%  { opacity: 1; transform: translate(-50%, 0); }
+      100% { opacity: 0; transform: translate(-50%, -4px); }
+    }
+    #welcomeToast {
+      position: fixed; top: 1rem; left: 50%; transform: translateX(-50%);
+      z-index: 60; pointer-events: none;
+      background: rgba(15,23,42,0.92); backdrop-filter: blur(8px);
+      border: 1px solid rgba(180,83,9,0.35);
+      color: #fde68a; padding: 0.5rem 1.1rem; border-radius: 9999px;
+      font-size: 0.85rem; letter-spacing: 0.02em;
+      box-shadow: 0 10px 30px -10px rgba(0,0,0,0.6);
+      animation: welcomeIn 3s ease-out forwards;
+    }
+
+    /* World-enter transition overlay (sits between dashboard click and narrative.html) */
+    #enterTransition {
+      position: fixed; inset: 0; z-index: 200;
+      background: radial-gradient(ellipse at center, #1c1917 0%, #020617 70%);
+      opacity: 0; transition: opacity 500ms ease-out;
+    }
+    #enterTransition.visible { opacity: 1; }
+    #enterClover {
+      position: absolute; left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      opacity: 1; transition: opacity 500ms ease-out;
+    }
+    /* On Enter click: clover fades out first, freeing the center stage. */
+    #enterTransition.lifting #enterClover { opacity: 0; }
+
+    /* Title starts below the clover, floats to dead center on click. */
+    #enterTitle {
+      position: absolute; left: 50%; top: calc(50% + 9.5rem);
+      transform: translate(-50%, 0);
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      letter-spacing: 0.32em; text-transform: uppercase;
+      color: #fcd34d; font-size: 0.85rem; font-weight: 600;
+      opacity: 0; text-align: center; max-width: 80vw;
+      transition: opacity 600ms ease-out 350ms,
+                  top 900ms cubic-bezier(0.4, 0, 0.2, 1) 250ms,
+                  transform 900ms cubic-bezier(0.4, 0, 0.2, 1) 250ms;
+    }
+    #enterTransition.visible #enterTitle { opacity: 0.9; }
+    /* On Enter click: title slides all the way up to viewport center. */
+    #enterTransition.lifting #enterTitle {
+      top: 50%;
+      transform: translate(-50%, -50%);
+      opacity: 1;
+    }
+
+    #enterButton {
+      position: absolute; left: 50%; top: calc(50% + 13rem);
+      transform: translate(-50%, 0);
+      background: rgba(180,83,9,0.12); border: 1px solid rgba(180,83,9,0.55);
+      color: #fde68a; padding: 0.7rem 2.2rem; border-radius: 9999px;
+      font-size: 0.85rem; font-weight: 500; letter-spacing: 0.18em;
+      text-transform: uppercase; cursor: pointer;
+      opacity: 0;
+      transition: opacity 500ms ease-out, background 0.2s, border-color 0.2s;
+    }
+    #enterTransition.show-button #enterButton { opacity: 1; }
+    #enterTransition.lifting #enterButton {
+      opacity: 0;
+      transition: opacity 250ms ease-out;
+    }
+    #enterButton:hover {
+      background: rgba(180,83,9,0.28);
+      border-color: rgba(180,83,9,0.85);
+      color: #fef3c7;
+    }
+    #enterCancel {
+      position: absolute; top: 1.5rem; right: 1.5rem;
+      color: rgba(148,163,184,0.6); font-size: 0.75rem; letter-spacing: 0.05em;
+      background: transparent; border: none; cursor: pointer; padding: 0.5rem 0.75rem;
+      opacity: 0; transition: opacity 400ms ease-out 600ms, color 0.2s;
+    }
+    #enterTransition.show-button #enterCancel { opacity: 1; }
+    #enterTransition.lifting #enterCancel { opacity: 0; transition: opacity 250ms ease-out; }
+    #enterCancel:hover { color: #cbd5e1; }
+    #enterTransition.fading { opacity: 0; pointer-events: none; }
+
+    /* Pure-black layer that fades in on top of everything just before navigation,
+       and fades back in on the next page — gives both sides of the page swap a
+       100%-opaque solid black frame so any flicker is invisible. */
+    #enterBlackout {
+      position: fixed; inset: 0; z-index: 250;
+      background: #000; opacity: 0; pointer-events: none;
+      transition: opacity 350ms ease-in;
+    }
+    #enterTransition.blacking-out #enterBlackout { opacity: 1; }
+  </style>
+</head>
+<body class="bg-slate-950 text-white min-h-screen">
+
+  <!-- Cinematic entrance (only inserted on fresh login by JS below) -->
+
+  <!-- Header -->
+  <header class="bg-slate-900 border-b border-slate-800 px-6 py-4">
+    <div class="max-w-5xl mx-auto flex justify-between items-center">
+      <div>
+        <h1 class="text-xl font-bold tracking-tight text-slate-100">Ayen-Ode</h1>
+        <p class="text-slate-600 text-xs mt-0.5">World Dashboard</p>
+      </div>
+      <div class="flex gap-2 items-center">
+        <button id="restartBtn" onclick="restartServer()" title="Restart the local server" class="bg-slate-800 hover:bg-slate-700 border border-slate-700/60 px-2.5 py-1.5 rounded-md text-slate-400 hover:text-emerald-400 transition-colors" aria-label="Restart server">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.95"/></svg>
+        </button>
+        <button id="settingsBtn" onclick="openSettingsWindow()" title="Open desktop settings window" class="bg-slate-800 hover:bg-slate-700 border border-slate-700/60 px-2.5 py-1.5 rounded-md text-slate-400 hover:text-amber-400 transition-colors" aria-label="Settings">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+        <button onclick="logout()" class="bg-red-950/60 hover:bg-red-900/80 border border-red-900/50 px-3 py-1.5 rounded-md text-sm text-red-400 hover:text-red-300 transition-colors">
+          Logout
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-6 py-8 space-y-10">
+
+    <!-- API Key Banner (hidden until status check confirms missing) -->
+    <div id="apiKeyBanner" class="hidden bg-amber-950/40 border border-amber-800/60 rounded-xl p-4 flex items-center gap-3">
+      <div class="flex-none w-8 h-8 rounded-full bg-amber-900/70 flex items-center justify-center text-amber-300">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+      </div>
+      <div class="flex-1">
+        <p class="text-amber-200 text-sm font-medium">Anthropic API key not configured</p>
+        <p class="text-amber-400/70 text-xs mt-0.5">Open the desktop settings window to add your key. Worlds and narrative will fail without it.</p>
+      </div>
+      <button onclick="openSettingsWindow()" class="bg-amber-800 hover:bg-amber-700 border border-amber-700/60 px-4 py-1.5 rounded-md text-sm font-medium text-amber-100 transition-colors whitespace-nowrap">
+        Open Settings
+      </button>
+    </div>
+
+    <!-- All Worlds -->
+    <section>
+      <div class="flex items-center gap-2.5 mb-4">
+        <div class="w-0.5 h-4 bg-slate-600 rounded-full"></div>
+        <h2 class="font-semibold text-slate-200 text-sm tracking-wide uppercase">All Worlds</h2>
+      </div>
+      <div id="worldsList">
+        <div class="flex items-center gap-3 text-slate-600 text-sm">
+          <div data-clover data-size="28" data-hue="142"></div>
+          <span>Loading…</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Create World CTA -->
+    <section>
+      <div class="flex items-center gap-2.5 mb-4">
+        <div class="w-0.5 h-4 bg-emerald-700 rounded-full"></div>
+        <h2 class="font-semibold text-slate-200 text-sm tracking-wide uppercase">Create New World</h2>
+      </div>
+      <a href="/create-world.html"
+         class="group block bg-slate-900 border border-slate-800 hover:border-amber-900/50 rounded-xl p-6 shadow-xl shadow-black/20 max-w-2xl transition-all duration-200 hover:shadow-amber-950/20 hover:shadow-2xl">
+        <div class="flex items-center gap-5">
+          <div class="flex-none w-12 h-12 rounded-full bg-amber-950/60 border border-amber-900/40 group-hover:border-amber-700/50 flex items-center justify-center transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
+                 fill="none" stroke="currentColor" stroke-width="1.75"
+                 stroke-linecap="round" stroke-linejoin="round"
+                 class="text-amber-500/70 group-hover:text-amber-400 transition-colors">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
+            </svg>
+          </div>
+          <div class="flex-1">
+            <h3 class="text-slate-200 font-semibold group-hover:text-white transition-colors mb-0.5">
+              Forge a new world
+            </h3>
+            <p class="text-slate-600 text-sm group-hover:text-slate-500 transition-colors">
+              Name it, set the tone, write the premise, choose your role — guided step by step.
+            </p>
+          </div>
+          <div class="flex-none text-slate-700 group-hover:text-amber-600 transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+                 fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+          </div>
+        </div>
+      </a>
+    </section>
+
+  </main>
+
+  <!-- Confirm Reset Modal -->
+  <div id="resetModal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
+    <div class="bg-slate-900 rounded-xl max-w-sm w-full mx-4 border border-slate-700 shadow-2xl">
+      <div class="px-6 py-4 border-b border-slate-800">
+        <h3 class="font-semibold text-slate-100">Reset World</h3>
+      </div>
+      <div class="p-6">
+        <p class="text-slate-300 text-sm mb-2">Reset <span id="resetWorldName" class="font-semibold text-white"></span>?</p>
+        <p class="text-slate-500 text-xs">All story progress, entities, and investigations will be wiped. The opening scene and world details are kept.</p>
+      </div>
+      <div class="px-6 py-3 border-t border-slate-800 flex justify-end gap-2">
+        <button onclick="closeResetModal()" class="text-slate-500 hover:text-slate-200 text-sm px-4 py-2 rounded-md hover:bg-slate-800 transition-colors">Cancel</button>
+        <button onclick="confirmReset()" class="bg-amber-700 hover:bg-amber-600 text-white text-sm px-4 py-2 rounded-md transition-colors font-medium">Reset</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm Delete Modal -->
+  <div id="deleteModal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50">
+    <div class="bg-slate-900 rounded-xl max-w-sm w-full mx-4 border border-red-900/40 shadow-2xl">
+      <div class="px-6 py-4 border-b border-slate-800">
+        <h3 class="font-semibold text-red-400">Delete World</h3>
+      </div>
+      <div class="p-6">
+        <p class="text-slate-300 text-sm mb-2">Permanently delete <span id="deleteWorldName" class="font-semibold text-white"></span>?</p>
+        <p class="text-slate-500 text-xs">This cannot be undone. All world data will be destroyed forever.</p>
+      </div>
+      <div class="px-6 py-3 border-t border-slate-800 flex justify-end gap-2">
+        <button onclick="closeDeleteModal()" class="text-slate-500 hover:text-slate-200 text-sm px-4 py-2 rounded-md hover:bg-slate-800 transition-colors">Cancel</button>
+        <button onclick="confirmDelete()" class="bg-red-800 hover:bg-red-700 text-white text-sm px-4 py-2 rounded-md transition-colors font-medium">Delete Forever</button>
+      </div>
+    </div>
+  </div>
+
+
+  <script src="/static/clover-loader.js"></script>
+  <script src="/static/app.js"></script>
+  <script>
+    checkAuth();
+
+    // --- Cinematic entrance: only when arriving fresh from /api/login ---
+    const justLoggedIn = sessionStorage.getItem("justLoggedIn") === "1";
+    if (justLoggedIn) {
+      sessionStorage.removeItem("justLoggedIn");
+      playEntrance();
+    }
+
+    function playEntrance() {
+      const overlay = document.createElement("div");
+      overlay.id = "entranceOverlay";
+      overlay.innerHTML = `
+        <div id="entranceClover"></div>
+        <div id="entranceTitle">Ayen-Ode</div>
+      `;
+      document.body.appendChild(overlay);
+
+      const cloverHost = overlay.querySelector("#entranceClover");
+      // Big amber clover on a dark stage
+      CloverLoader.createLoader(cloverHost, 180, 38);
+
+      // Mark sections as stagger candidates so they arrive after the overlay fades
+      document.querySelectorAll("main > section").forEach((s, i) => {
+        s.classList.add("stagger-in");
+        s.style.transitionDelay = (i * 90) + "ms";
+      });
+
+      requestAnimationFrame(() => overlay.classList.add("show-title"));
+
+      setTimeout(() => {
+        overlay.classList.add("fading");
+        document.querySelectorAll(".stagger-in").forEach(s => s.classList.add("go"));
+        showWelcomeToast();
+      }, 1400);
+
+      setTimeout(() => overlay.remove(), 2100);
+    }
+
+    function showWelcomeToast() {
+      const username = (localStorage.getItem("username") || "").trim();
+      if (!username) return;
+      const toast = document.createElement("div");
+      toast.id = "welcomeToast";
+      toast.textContent = `Welcome back, ${username}`;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 3200);
+    }
+
+    // --- Server restart ---
+    async function restartServer() {
+      const btn = document.getElementById("restartBtn");
+      btn.disabled = true;
+      btn.style.opacity = "0.4";
+
+      const result = await apiCall("/api/server/restart", "POST", {});
+      if (!result || !result.ok) {
+        btn.disabled = false;
+        btn.style.opacity = "";
+        flashSettingsHint(result?.error || "Restart failed — is this a local server?", true);
+        return;
+      }
+
+      flashSettingsHint("Restarting server…");
+
+      // Poll /health every 500ms until the server is back, then reload the page.
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
+        try {
+          const r = await fetch("/health");
+          if (r.ok) {
+            clearInterval(poll);
+            window.location.reload();
+          }
+        } catch (_) {}
+        if (attempts > 24) {
+          clearInterval(poll);
+          btn.disabled = false;
+          btn.style.opacity = "";
+          flashSettingsHint("Server didn't come back — check your terminal", true);
+        }
+      }, 500);
+    }
+
+    // --- Settings window launcher ---
+    async function openSettingsWindow() {
+      const result = await apiCall("/api/settings/launch", "POST", {});
+      if (result && result.ok) {
+        flashSettingsHint("Settings window opened on your desktop");
+      } else if (result && result.error) {
+        flashSettingsHint(result.error, true);
+      }
+    }
+
+    function flashSettingsHint(text, isError) {
+      const toast = document.createElement("div");
+      toast.id = "welcomeToast";
+      toast.textContent = text;
+      if (isError) toast.style.borderColor = "rgba(220,38,38,0.5)";
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 3200);
+    }
+
+    async function checkApiKeyStatus() {
+      const status = await apiCall("/api/settings/status");
+      if (!status) return;
+      const banner = document.getElementById("apiKeyBanner");
+      if (!status.api_key_configured) {
+        banner.classList.remove("hidden");
+      } else {
+        banner.classList.add("hidden");
+      }
+    }
+
+    let pendingResetId = null;
+    let pendingDeleteId = null;
+
+    async function loadData() {
+      const [worldsResp, activeResp] = await Promise.all([
+        apiCall("/api/worlds"),
+        apiCall("/api/worlds/active"),
+      ]);
+
+      if (worldsResp && worldsResp.worlds) renderWorlds(worldsResp.worlds);
+      if (activeResp && activeResp.world) {
+        renderActiveWorld(activeResp.world);
+      } else {
+        document.getElementById("activeWorldCard").innerHTML =
+          '<p class="text-slate-600 text-sm">No active world. Create one below or switch to an existing world.</p>';
+      }
+    }
+
+    function renderActiveWorld(world) {
+      const safeName = (world.name || "Unknown").replace(/"/g, '&quot;');
+      document.getElementById("activeWorldCard").innerHTML = `
+        <div class="flex flex-col sm:flex-row sm:items-start gap-6" data-world-id="${world.world_id}" data-world-name="${safeName}">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1">
+              <h3 class="text-xl font-bold tracking-tight text-slate-100">${world.name || "Unknown"}</h3>
+              <span class="text-xs bg-emerald-950 text-emerald-400 border border-emerald-800/50 px-2 py-0.5 rounded-full">active</span>
+            </div>
+            <p class="text-slate-400 text-sm leading-relaxed">${world.premise || ""}</p>
+            ${world.theme_tone ? `<p class="text-slate-600 text-xs mt-2">${world.theme_tone}</p>` : ''}
+          </div>
+          <div class="flex-none flex flex-col gap-2 items-stretch">
+            <button
+              onclick="enterWorld('${world.world_id}')"
+              class="bg-amber-800 hover:bg-amber-700 border border-amber-700/50 px-5 py-2.5 rounded-lg text-sm font-medium text-amber-100 transition-colors whitespace-nowrap"
+            >
+              Enter World →
+            </button>
+            <button
+              onclick="testIntro('${world.world_id}')"
+              title="Replay opening scene without affecting saved chat history"
+              class="bg-slate-800 hover:bg-slate-700 border border-slate-700/60 px-5 py-1.5 rounded-md text-xs text-slate-400 hover:text-amber-300 transition-colors whitespace-nowrap"
+            >
+              Test intro
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    function enterWorld(worldId) {
+      enterWorldWithTransition(worldId, false);
+    }
+
+    function testIntro(worldId) {
+      enterWorldWithTransition(worldId, true);
+    }
+
+    function enterWorldWithTransition(worldId, replayIntro) {
+      // Look up the world name for the transition caption.
+      const card = document.querySelector(`[data-world-id="${worldId}"]`);
+      const worldName = (card && card.dataset.worldName) || "";
+      const escape = s => s.replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
+
+      const overlay = document.createElement("div");
+      overlay.id = "enterTransition";
+      overlay.innerHTML = `
+        <div id="enterClover"></div>
+        <div id="enterTitle">${escape(worldName)}</div>
+        <button type="button" id="enterCancel" title="Back to dashboard">Cancel</button>
+        <div id="enterBlackout"></div>
+      `;
+      document.body.appendChild(overlay);
+
+      const cloverHost = overlay.querySelector("#enterClover");
+      // Amber clover, larger than the login one to feel more 'world-scale'
+      CloverLoader.createLoader(cloverHost, 220, 38);
+
+      requestAnimationFrame(() => overlay.classList.add("visible"));
+      // Reveal the Enter button after the clover has had a moment to draw.
+      setTimeout(() => overlay.classList.add("show-button"), 700);
+      // Auto-proceed after 2 seconds — no second click needed.
+      const autoProceed = setTimeout(() => proceed(), 2000);
+
+      const url = `/narrative.html?world_id=${worldId}&fresh=1${replayIntro ? "&replay_intro=1" : ""}`;
+      let proceeded = false;
+      function proceed() {
+        if (proceeded) return;
+        proceeded = true;
+        clearTimeout(autoProceed);
+        document.removeEventListener("keydown", onKey);
+        // Title floats up to its target Y; button + cancel fade out.
+        overlay.classList.add("lifting");
+        sessionStorage.setItem("worldEntering", "1");
+        if (replayIntro) sessionStorage.setItem("replayIntro", "1");
+        // Sequence:
+        //   t=0:    clover fade + title starts floating to center
+        //   t=1100: solid black layer starts fading in over everything
+        //   t=1450: blackout fully opaque → navigate
+        //   (next page paints with its own black layer at opacity 1)
+        setTimeout(() => { overlay.classList.add("blacking-out"); }, 1100);
+        setTimeout(() => { window.location.href = url; }, 1450);
+      }
+      function cancel() {
+        if (proceeded) return;
+        proceeded = true;
+        document.removeEventListener("keydown", onKey);
+        overlay.classList.add("fading");
+        setTimeout(() => overlay.remove(), 500);
+      }
+
+      overlay.querySelector("#enterCancel").addEventListener("click", cancel);
+
+      function onKey(e) {
+        if (e.key === "Enter") { e.preventDefault(); proceed(); }
+        else if (e.key === "Escape") { e.preventDefault(); cancel(); }
+      }
+      document.addEventListener("keydown", onKey);
+    }
+
+    function renderWorlds(worlds) {
+      if (!worlds || worlds.length === 0) {
+        document.getElementById("worldsList").innerHTML =
+          '<p class="text-slate-600 text-sm">No worlds yet. Create one below.</p>';
+        return;
+      }
+
+      const cards = worlds.map(w => {
+        const isActive = w.status === 'active';
+        const safeName = (w.name || "Untitled").replace(/"/g, '&quot;');
+        return `
+          <div class="bg-slate-900 border ${isActive ? 'border-amber-900/40' : 'border-slate-800'} rounded-xl p-5 shadow-lg shadow-black/20 flex flex-col gap-4" data-world-id="${w.world_id}" data-world-name="${safeName}">
+            <div class="flex items-start justify-between gap-3">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 mb-1">
+                  <h3 class="font-semibold text-slate-100 truncate">${w.name || "Untitled"}</h3>
+                  ${isActive ? '<span class="text-xs bg-emerald-950 text-emerald-400 border border-emerald-800/50 px-1.5 py-0.5 rounded-full flex-none">active</span>' : ''}
+                </div>
+                <p class="text-slate-500 text-xs leading-relaxed">${(w.premise || "").substring(0, 80)}${(w.premise || "").length > 80 ? '…' : ''}</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 pt-1 border-t border-slate-800/60">
+              ${isActive ? `
+                <button onclick="enterWorld('${w.world_id}')" class="flex-1 bg-amber-800 hover:bg-amber-700 border border-amber-700/50 py-1.5 rounded-md text-xs font-medium text-amber-100 transition-colors text-center">
+                  Enter →
+                </button>
+              ` : `
+                <button onclick="switchWorld('${w.world_id}')" class="flex-1 bg-slate-800 hover:bg-slate-700 border border-slate-700/60 py-1.5 rounded-md text-xs font-medium text-slate-300 hover:text-slate-100 transition-colors text-center">
+                  Switch
+                </button>
+              `}
+              <button
+                onclick="testIntro('${w.world_id}')"
+                title="Replay opening scene"
+                class="bg-slate-800 hover:bg-slate-700 border border-slate-700/60 px-2.5 py-1.5 rounded-md text-xs font-medium text-slate-400 hover:text-amber-300 transition-colors"
+              >
+                Intro
+              </button>
+              <button
+                onclick="openResetModal('${w.world_id}', '${(w.name || '').replace(/'/g, "\\'")}')"
+                class="bg-amber-950/50 hover:bg-amber-900/60 border border-amber-900/40 px-3 py-1.5 rounded-md text-xs font-medium text-amber-500 hover:text-amber-300 transition-colors"
+              >
+                Reset
+              </button>
+              <button
+                onclick="openDeleteModal('${w.world_id}', '${(w.name || '').replace(/'/g, "\\'")}')"
+                class="bg-red-950/30 hover:bg-red-900/50 border border-red-900/30 px-3 py-1.5 rounded-md text-xs font-medium text-red-500 hover:text-red-300 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      document.getElementById("worldsList").innerHTML = `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">${cards}</div>`;
+    }
+
+    async function switchWorld(worldId) {
+      const result = await apiCall("/api/worlds/switch", "POST", { world_id: worldId });
+      if (result) loadData();
+    }
+
+    function openResetModal(worldId, worldName) {
+      pendingResetId = worldId;
+      document.getElementById("resetWorldName").textContent = worldName;
+      document.getElementById("resetModal").classList.remove("hidden");
+    }
+
+    function closeResetModal() {
+      pendingResetId = null;
+      document.getElementById("resetModal").classList.add("hidden");
+    }
+
+    async function confirmReset() {
+      if (!pendingResetId) return;
+      const worldId = pendingResetId;
+      closeResetModal();
+      try {
+        const result = await apiCall(`/api/worlds/${worldId}/reset`, "POST", {});
+        if (result && result.success) loadData();
+        else alert("Reset failed: " + (result?.error || "Unknown error"));
+      } catch (e) {
+        alert("Reset failed: " + e.message);
+      }
+    }
+
+    function openDeleteModal(worldId, worldName) {
+      pendingDeleteId = worldId;
+      document.getElementById("deleteWorldName").textContent = worldName;
+      document.getElementById("deleteModal").classList.remove("hidden");
+    }
+
+    function closeDeleteModal() {
+      pendingDeleteId = null;
+      document.getElementById("deleteModal").classList.add("hidden");
+    }
+
+    async function confirmDelete() {
+      if (!pendingDeleteId) return;
+      const worldId = pendingDeleteId;
+      closeDeleteModal();
+      try {
+        const token = getToken();
+        const response = await fetch(`/api/worlds/${worldId}`, {
+          method: "DELETE",
+          headers: { "Authorization": `Bearer ${token}` },
+        });
+        const result = await response.json();
+        if (result && result.success) loadData();
+        else alert("Delete failed: " + (result?.error || "Unknown error"));
+      } catch (e) {
+        alert("Delete failed: " + e.message);
+      }
+    }
+
+    loadData();
+    checkApiKeyStatus();
+
+    // When the user presses Back from the narrative, the browser restores this
+    // page from bfcache. At the point we navigated away, the #enterBlackout
+    // layer was fully opaque (solid black). Reset it instantly so Back shows
+    // the dashboard cleanly instead of a black screen.
+    window.addEventListener('pageshow', function (e) {
+      if (e.persisted) {
+        const overlay = document.getElementById('enterTransition');
+        if (overlay) overlay.remove();
+        sessionStorage.removeItem('worldEntering');
+        sessionStorage.removeItem('replayIntro');
+      }
+    });
+  </script>
+</body>
+</html>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         

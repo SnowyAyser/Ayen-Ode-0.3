@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Create World — Ayen-Ode</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* ─── Background ─────────────────────────────────────────── */
+    body { background: #020617; min-height: 100vh; }
+
+    .bg-glow {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background:
+        radial-gradient(ellipse 60% 50% at 15% 60%, rgba(120,53,15,0.18) 0%, transparent 100%),
+        radial-gradient(ellipse 50% 40% at 85% 30%, rgba(30,58,138,0.10) 0%, transparent 100%),
+        radial-gradient(ellipse 40% 60% at 50% 90%, rgba(88,28,135,0.07) 0%, transparent 100%);
+    }
+
+    /* ─── Stars ──────────────────────────────────────────────── */
+    .star {
+      position: absolute; border-radius: 50%; background: white;
+      animation: twinkle var(--dur, 3s) ease-in-out infinite;
+      opacity: 0;
+    }
+    @keyframes twinkle {
+      0%, 100% { opacity: 0; }
+      50%       { opacity: var(--op, 0.5); }
+    }
+
+    /* ─── Step progress dots ─────────────────────────────────── */
+    .step-dot {
+      height: 6px; border-radius: 3px; background: rgba(100,116,139,0.3);
+      transition: all 450ms cubic-bezier(0.4,0,0.2,1);
+    }
+    .step-dot.done   { width: 18px !important; background: rgba(217,119,6,0.45); }
+    .step-dot.active { width: 32px !important; background: #d97706;
+                       box-shadow: 0 0 10px rgba(217,119,6,0.55); }
+    .step-dot.pending { width: 6px; }
+
+    /* ─── Step container ─────────────────────────────────────── */
+    #stepWrap { position: relative; overflow: hidden; }
+
+    .step-panel {
+      position: absolute; inset: 0;
+      opacity: 0; pointer-events: none;
+      transform: translateX(52px);
+      transition: opacity 380ms ease-out, transform 380ms cubic-bezier(0.4,0,0.2,1);
+    }
+    .step-panel.active {
+      position: relative;
+      opacity: 1; pointer-events: auto;
+      transform: translateX(0);
+    }
+    .step-panel.exit-left {
+      position: absolute;
+      opacity: 0; pointer-events: none;
+      transform: translateX(-52px);
+    }
+
+    /* ─── Inputs ─────────────────────────────────────────────── */
+    .world-input {
+      background: rgba(15,23,42,0.65);
+      border: 1px solid rgba(51,65,85,0.7);
+      color: #f1f5f9;
+      transition: border-color 0.25s, box-shadow 0.25s;
+      backdrop-filter: blur(8px);
+    }
+    .world-input::placeholder { color: rgba(100,116,139,0.55); }
+    .world-input:focus {
+      outline: none;
+      border-color: rgba(217,119,6,0.65);
+      box-shadow: 0 0 0 3px rgba(217,119,6,0.12), 0 0 24px rgba(217,119,6,0.07);
+    }
+    .world-input.shake {
+      animation: shake 380ms cubic-bezier(.36,.07,.19,.97);
+      border-color: rgba(239,68,68,0.55) !important;
+    }
+    @keyframes shake {
+      10%, 90%  { transform: translateX(-2px); }
+      20%, 80%  { transform: translateX(3px); }
+      30%, 50%, 70% { transform: translateX(-4px); }
+      40%, 60%  { transform: translateX(4px); }
+    }
+
+    /* ─── Chips ──────────────────────────────────────────────── */
+    .chip {
+      border: 1px solid rgba(71,85,105,0.5);
+      color: rgba(148,163,184,0.75);
+      padding: 0.3rem 0.85rem;
+      border-radius: 9999px;
+      font-size: 0.72rem;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s, background 0.2s;
+      background: rgba(15,23,42,0.4);
+      user-select: none;
+    }
+    .chip:hover {
+      border-color: rgba(217,119,6,0.55);
+      color: #fde68a;
+      background: rgba(120,53,15,0.18);
+    }
+    .chip.selected {
+      border-color: rgba(217,119,6,0.7);
+      color: #fde68a;
+      background: rgba(120,53,15,0.28);
+    }
+
+    /* ─── Forge button ───────────────────────────────────────── */
+    @keyframes forgeGlow {
+      0%,100% { box-shadow: 0 0 18px rgba(217,119,6,0.28), 0 4px 20px rgba(0,0,0,0.5); }
+      50%     { box-shadow: 0 0 40px rgba(217,119,6,0.55), 0 4px 28px rgba(0,0,0,0.5); }
+    }
+    #forgeBtn:not(:disabled) { animation: forgeGlow 2.6s ease-in-out infinite; }
+
+    /* ─── Review card ────────────────────────────────────────── */
+    .review-row {
+      padding: 0.65rem 0;
+      border-bottom: 1px solid rgba(30,41,59,0.8);
+    }
+    .review-row:last-child { border-bottom: none; }
+
+    /* ─── Loading overlay ────────────────────────────────────── */
+    #loadingOverlay {
+      opacity: 0; pointer-events: none;
+      transition: opacity 500ms ease;
+    }
+    #loadingOverlay.visible {
+      opacity: 1; pointer-events: auto;
+    }
+
+    /* ─── Scrollbar ──────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(100,116,139,0.3); border-radius: 2px; }
+  </style>
+</head>
+<body class="text-white min-h-screen">
+
+  <!-- Ambient background -->
+  <div class="bg-glow"></div>
+  <div id="starsLayer" class="fixed inset-0 z-0 overflow-hidden pointer-events-none"></div>
+
+  <!-- Page -->
+  <div class="relative z-10 min-h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="px-6 py-5 flex items-center justify-between flex-none">
+      <a href="/dashboard.html"
+         class="flex items-center gap-2 text-slate-500 hover:text-slate-300 transition-colors text-sm select-none">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+             fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"></polyline>
+        </svg>
+        Dashboard
+      </a>
+      <div class="flex items-center gap-2.5">
+        <div id="headerClover"></div>
+        <span class="text-amber-500/60 text-xs tracking-widest uppercase font-medium select-none">
+          Ayen-Ode
+        </span>
+      </div>
+      <div style="width:88px"></div>
+    </header>
+
+    <!-- Wizard body -->
+    <main class="flex-1 flex flex-col items-center justify-center px-6 py-6">
+
+      <!-- Step progress -->
+      <div class="flex items-center gap-2 mb-14" id="stepDots">
+        <div class="step-dot active" id="dot-0"></div>
+        <div class="step-dot pending" id="dot-1"></div>
+        <div class="step-dot pending" id="dot-2"></div>
+        <div class="step-dot pending" id="dot-3"></div>
+      </div>
+
+      <!-- Step panels -->
+      <div class="w-full max-w-lg" id="stepWrap" style="min-height:340px">
+
+        <!-- ── Step 0: Name ──────────────────────────────────── -->
+        <div class="step-panel active" id="step-0">
+          <div class="text-center mb-10">
+            <p class="text-amber-500/50 text-xs tracking-widest uppercase mb-4">Step 1 of 4</p>
+            <h2 class="text-3xl font-bold text-slate-100 tracking-tight mb-3">Name Your World</h2>
+            <p class="text-slate-500 text-sm leading-relaxed max-w-sm mx-auto">
+              Every great story begins with a name. Choose something that feels right —
+              you can always build the myth around it.
+            </p>
+          </div>
+          <input
+            id="worldName"
+            type="text"
+            placeholder="The Shattered Empire, Veilfall, The City of Clocks…"
+            class="world-input w-full rounded-xl px-4 py-4 text-base"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+
+        <!-- ── Step 1: Tone ──────────────────────────────────── -->
+        <div class="step-panel" id="step-1">
+          <div class="text-center mb-10">
+            <p class="text-amber-500/50 text-xs tracking-widest uppercase mb-4">Step 2 of 4</p>
+            <h2 class="text-3xl font-bold text-slate-100 tracking-tight mb-3">Set the Tone</h2>
+            <p class="text-slate-500 text-sm leading-relaxed max-w-sm mx-auto">
+              What mood should the narrative carry? Pick a quick-start or describe your own.
+            </p>
+          </div>
+          <div class="flex flex-wrap gap-2 justify-center mb-5">
+            <button class="chip" data-target="worldTheme">Dark fantasy</button>
+            <button class="chip" data-target="worldTheme">Political intrigue</button>
+            <button class="chip" data-target="worldTheme">Cosmic horror</button>
+            <button class="chip" data-target="worldTheme">Solarpunk</button>
+            <button class="chip" data-target="worldTheme">Noir mystery</button>
+            <button class="chip" data-target="worldTheme">Mythic epic</button>
+            <button class="chip" data-target="worldTheme">Fae &amp; folklore</button>
+            <button class="chip" data-target="worldTheme">Biopunk</button>
+          </div>
+          <input
+            id="worldTheme"
+            type="text"
+            placeholder="Or describe your own tone…"
+            class="world-input w-full rounded-xl px-4 py-3 text-sm"
+            autocomplete="off"
+          />
+          <p class="text-slate-700 text-xs mt-2 text-center">Optional — you can leave this blank</p>
+        </div>
+
+        <!-- ── Step 2: Premise ───────────────────────────────── -->
+        <div class="step-panel" id="step-2">
+          <div class="text-center mb-10">
+            <p class="text-amber-500/50 text-xs tracking-widest uppercase mb-4">Step 3 of 4</p>
+            <h2 class="text-3xl font-bold text-slate-100 tracking-tight mb-3">The Premise</h2>
+            <p class="text-slate-500 text-sm leading-relaxed max-w-sm mx-auto">
+              Describe the world, its central conflict, and what makes it breathe.
+              The more texture you give, the richer the narrative.
+            </p>
+          </div>
+          <div>
+            <textarea
+              id="worldPremise"
+              placeholder="A dying empire fractures into warring city-states while an ancient god slowly awakens beneath the capital. The court whispers of a succession crisis no one dares name aloud…"
+              class="world-input w-full rounded-xl px-4 py-3.5 text-sm h-36 resize-none"
+            ></textarea>
+            <div class="flex justify-between items-center mt-1.5">
+              <p class="text-slate-700 text-xs">Required</p>
+              <p class="text-slate-700 text-xs" id="premiseCount">0 characters</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Step 3: Role + Review ─────────────────────────── -->
+        <div class="step-panel" id="step-3">
+          <div class="text-center mb-8">
+            <p class="text-amber-500/50 text-xs tracking-widest uppercase mb-4">Step 4 of 4</p>
+            <h2 class="text-3xl font-bold text-slate-100 tracking-tight mb-3">Your Place In It</h2>
+            <p class="text-slate-500 text-sm leading-relaxed max-w-sm mx-auto">
+              Who are you in this world? Be as specific or vague as you like.
+            </p>
+          </div>
+          <div class="space-y-4">
+            <div class="flex flex-wrap gap-2 justify-center">
+              <button class="chip" data-target="playerRole">Disgraced knight</button>
+              <button class="chip" data-target="playerRole">Wandering scholar</button>
+              <button class="chip" data-target="playerRole">Exiled heir</button>
+              <button class="chip" data-target="playerRole">Street thief</button>
+              <button class="chip" data-target="playerRole">Court spy</button>
+              <button class="chip" data-target="playerRole">Temple acolyte</button>
+            </div>
+            <input
+              id="playerRole"
+              type="text"
+              placeholder="Or describe your character…"
+              class="world-input w-full rounded-xl px-4 py-3 text-sm"
+              autocomplete="off"
+            />
+            <!-- Review card -->
+            <div class="bg-slate-900/50 border border-slate-800/60 rounded-xl px-5 pt-1 pb-2 backdrop-blur-sm">
+              <div class="review-row">
+                <p class="text-slate-600 text-xs uppercase tracking-wider mb-0.5">World</p>
+                <p class="text-slate-200 text-sm font-semibold" id="review-name">—</p>
+              </div>
+              <div class="review-row">
+                <p class="text-slate-600 text-xs uppercase tracking-wider mb-0.5">Tone</p>
+                <p class="text-slate-400 text-sm" id="review-theme">—</p>
+              </div>
+              <div class="review-row">
+                <p class="text-slate-600 text-xs uppercase tracking-wider mb-0.5">Premise</p>
+                <p class="text-slate-400 text-sm leading-relaxed" id="review-premise">—</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /stepWrap -->
+
+      <!-- Navigation row -->
+      <div class="flex items-center gap-3 mt-10 w-full max-w-lg">
+
+        <button
+          id="backBtn"
+          onclick="prevStep()"
+          class="flex items-center gap-1.5 text-slate-500 hover:text-slate-300 text-sm transition-colors px-3 py-2 rounded-lg hover:bg-slate-800/50 invisible"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24"
+               fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+          Back
+        </button>
+
+        <div class="flex-1"></div>
+
+        <button
+          id="nextBtn"
+          onclick="nextStep()"
+          class="bg-amber-800 hover:bg-amber-700 border border-amber-700/50 px-7 py-2.5 rounded-xl text-sm font-medium text-amber-100 transition-colors"
+        >
+          Continue →
+        </button>
+
+        <button
+          id="forgeBtn"
+          onclick="createWorld()"
+          class="hidden bg-amber-700 hover:bg-amber-600 border border-amber-600/50 px-8 py-2.5 rounded-xl text-sm font-semibold text-amber-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          ✦ Forge This World
+        </button>
+
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Loading overlay -->
+  <div id="loadingOverlay" class="fixed inset-0 z-50 bg-slate-950/96 backdrop-blur-sm
+       flex flex-col items-center justify-center">
+    <div id="loadingClover" class="mb-8"></div>
+    <h3 class="text-xl font-bold text-slate-100 tracking-tight mb-2">Forging Your World</h3>
+    <p id="loadingStatus" class="text-slate-500 text-sm">Initialising with Claude…</p>
+  </div>
+
+  <script src="/static/clover-loader.js"></script>
+  <script src="/static/app.js"></script>
+  <script>
+    checkAuth();
+
+    // ── Stars ────────────────────────────────────────────────
+    const starsLayer = document.getElementById('starsLayer');
+    for (let i = 0; i < 130; i++) {
+      const s = document.createElement('div');
+      s.className = 'star';
+      const big = Math.random() < 0.12;
+      s.style.cssText = `
+        left:${Math.random()*100}%; top:${Math.random()*100}%;
+        width:${big ? 2 : 1}px; height:${big ? 2 : 1}px;
+        --dur:${2 + Math.random()*4}s;
+        --op:${big ? 0.55 : 0.25 + Math.random()*0.3};
+        animation-delay:${Math.random()*5}s;
+      `;
+      starsLayer.appendChild(s);
+    }
+
+    // ── Clover in header ─────────────────────────────────────
+    CloverLoader.createLoader(document.getElementById('headerClover'), 22, 38);
+
+    // ── Wizard state ─────────────────────────────────────────
+    let currentStep = 0;
+    const TOTAL = 4;
+
+    function updateDots() {
+      for (let i = 0; i < TOTAL; i++) {
+        const dot = document.getElementById(`dot-${i}`);
+        dot.className = 'step-dot';
+        if (i < currentStep)      dot.classList.add('done');
+        else if (i === currentStep) dot.classList.add('active');
+        else                        dot.classList.add('pending');
+      }
+    }
+
+    function updateButtons() {
+      const back  = document.getElementById('backBtn');
+      const next  = document.getElementById('nextBtn');
+      const forge = document.getElementById('forgeBtn');
+      back.classList.toggle('invisible', currentStep === 0);
+      if (currentStep === TOTAL - 1) {
+        next.classList.add('hidden');
+        forge.classList.remove('hidden');
+      } else {
+        next.classList.remove('hidden');
+        forge.classList.add('hidden');
+      }
+    }
+
+    function goToStep(next) {
+      const from = document.getElementById(`step-${currentStep}`);
+      const to   = document.getElementById(`step-${next}`);
+      const dir  = next > currentStep ? 1 : -1;
+
+      // Slide out current
+      from.classList.remove('active');
+      from.classList.add('exit-left');
+      from.style.transform = `translateX(${dir * -52}px)`;
+      from.style.opacity   = '0';
+
+      // Prepare incoming
+      to.style.transform   = `translateX(${dir * 52}px)`;
+      to.style.opacity     = '0';
+      to.style.transition  = 'none';
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          to.style.transition = '';
+          to.classList.add('active');
+
+          // Clean up exit panel after transition
+          setTimeout(() => {
+            from.classList.remove('exit-left');
+            from.style.transform = '';
+            from.style.opacity   = '';
+          }, 400);
+        });
+      });
+
+      currentStep = next;
+      updateDots();
+      updateButtons();
+
+      if (currentStep === TOTAL - 1) updateReview();
+
+      // Focus first input in new step
+      setTimeout(() => {
+        const inp = document.querySelector(`#step-${currentStep} input, #step-${currentStep} textarea`);
+        if (inp) inp.focus();
+      }, 380);
+    }
+
+    function nextStep() {
+      if (!validateStep()) return;
+      if (currentStep < TOTAL - 1) goToStep(currentStep + 1);
+    }
+
+    function prevStep() {
+      if (currentStep > 0) goToStep(currentStep - 1);
+    }
+
+    // ── Validation ───────────────────────────────────────────
+    function validateStep() {
+      if (currentStep === 0) {
+        const v = document.getElementById('worldName').value.trim();
+        if (!v) { shakeInput('worldName'); return false; }
+      }
+      if (currentStep === 2) {
+        const v = document.getElementById('worldPremise').value.trim();
+        if (!v) { shakeInput('worldPremise'); return false; }
+      }
+      return true;
+    }
+
+    function shakeInput(id) {
+      const el = document.getElementById(id);
+      el.classList.remove('shake');
+      void el.offsetWidth; // reflow
+      el.classList.add('shake');
+      setTimeout(() => el.classList.remove('shake'), 400);
+    }
+
+    // ── Chips ────────────────────────────────────────────────
+    document.querySelectorAll('.chip').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const targetId = btn.dataset.target;
+        const field = document.getElementById(targetId);
+        const label = btn.textContent.trim();
+        const group = btn.closest('.flex');
+
+        if (btn.classList.contains('selected')) {
+          btn.classList.remove('selected');
+          field.value = '';
+        } else {
+          group.querySelectorAll('.chip').forEach(c => c.classList.remove('selected'));
+          btn.classList.add('selected');
+          field.value = label;
+        }
+      });
+    });
+
+    // Deselect chip if user manually edits the input
+    ['worldTheme', 'playerRole'].forEach(id => {
+      document.getElementById(id).addEventListener('input', function() {
+        const chips = document.querySelectorAll(`.chip[data-target="${id}"]`);
+        chips.forEach(c => {
+          if (c.textContent.trim() !== this.value) c.classList.remove('selected');
+        });
+      });
+    });
+
+    // ── Premise char count ───────────────────────────────────
+    document.getElementById('worldPremise').addEventListener('input', function() {
+      document.getElementById('premiseCount').textContent = this.value.length + ' characters';
+    });
+
+    // ── Review card ──────────────────────────────────────────
+    function updateReview() {
+      const name    = document.getElementById('worldName').value.trim()    || '—';
+      const theme   = document.getElementById('worldTheme').value.trim()   || 'No specific tone set';
+      const premise = document.getElementById('worldPremise').value.trim() || '—';
+      document.getElementById('review-name').textContent    = name;
+      document.getElementById('review-theme').textContent   = theme;
+      const cap = 140;
+      document.getElementById('review-premise').textContent =
+        premise.length > cap ? premise.substring(0, cap) + '…' : premise;
+    }
+
+    // ── Enter key to advance ─────────────────────────────────
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA' && e.target.tagName !== 'BUTTON') {
+        e.preventDefault();
+        if (currentStep < TOTAL - 1) nextStep();
+        else createWorld();
+      }
+    });
+
+    // ── World creation ───────────────────────────────────────
+    async function createWorld() {
+      if (!validateStep()) return;
+
+      const forgeBtn = document.getElementById('forgeBtn');
+      forgeBtn.disabled = true;
+
+      const overlay    = document.getElementById('loadingOverlay');
+      const statusText = document.getElementById('loadingStatus');
+      overlay.classList.add('visible');
+
+      // Clover in overlay (only once)
+      const cloverHost = document.getElementById('loadingClover');
+      if (!cloverHost.hasChildNodes()) {
+        CloverLoader.createLoader(cloverHost, 84, 38);
+      }
+
+      try {
+        const token = getToken();
+        const resp = await fetch('/api/worlds/create', {
+          method:  'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name:        document.getElementById('worldName').value.trim(),
+            premise:     document.getElementById('worldPremise').value.trim(),
+            theme_tone:  document.getElementById('worldTheme').value.trim(),
+            player_role: document.getElementById('playerRole').value.trim(),
+          }),
+        });
+
+        if (!resp.ok) {
+          const err = await resp.json();
+          throw new Error(err.error || 'Failed to create world');
+        }
+
+        const data = await resp.json();
+        if (!data.world_id) throw new Error('No world ID returned');
+
+        statusText.textContent = 'Preparing your narrative…';
+        setTimeout(() => {
+          window.location.href = `/narrative.html?world_id=${data.world_id}`;
+        }, 700);
+      } catch (err) {
+        overlay.classList.remove('visible');
+        forgeBtn.disabled = false;
+        // Show brief error toast
+        showError(err.message);
+      }
+    }
+
+    function showError(msg) {
+      const t = document.createElement('div');
+      t.textContent = msg;
+      t.style.cssText = `
+        position:fixed; bottom:2rem; left:50%; transform:translateX(-50%);
+        background:rgba(127,29,29,0.9); color:#fca5a5;
+        border:1px solid rgba(239,68,68,0.4); backdrop-filter:blur(8px);
+        padding:0.55rem 1.2rem; border-radius:9999px;
+        font-size:0.82rem; z-index:999;
+        animation: fadeInUp 300ms ease-out forwards;
+      `;
+      document.body.appendChild(t);
+      setTimeout(() => t.remove(), 4000);
+    }
+
+    // Initial focus
+    setTimeout(() => document.getElementById('worldName').focus(), 200);
+  </script>
+</body>
+</html>

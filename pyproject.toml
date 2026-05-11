@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ayen-ode"
+version = "0.1.0"
+description = "Hosted server for Ayen-Ode world state, handoffs, entities, and hidden stats."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "uvicorn[standard]>=0.30,<1",
+  "starlette>=0.37,<1",
+  "python-dotenv>=1.0,<2",
+  "anthropic>=0.28,<1",
+  "libsql-experimental>=0.0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+]
+
+[project.scripts]
+ayen-ode = "ayen_ode.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths 
