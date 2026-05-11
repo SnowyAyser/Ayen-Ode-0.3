@@ -140,7 +140,13 @@ def run_desktop() -> int:
     # Show the window. webview.start() blocks until all windows close.
     import webview
 
-    webview.create_window(
+    # Read the persisted fullscreen preference from %APPDATA%/Ayen-Ode/.env.
+    # We re-parse the file rather than relying on settings.* because settings
+    # is loaded at server import time and doesn't expose this field.
+    start_fullscreen = _read_fullscreen_preference()
+
+    api = DesktopApi()
+    window = webview.create_window(
         title="Ayen-Ode",
         url=base_url + "/desktop-bootstrap",
         width=1280,
@@ -148,7 +154,10 @@ def run_desktop() -> int:
         min_size=(960, 640),
         background_color="#0f172a",
         text_select=True,
+        fullscreen=start_fullscreen,
+        js_api=api,
     )
+    api.bind_window(window)
 
     # gui="edgechromium" forces the Edge WebView2 backend on Windows. On other
     # platforms pywebview picks the best available backend automatically.
@@ -166,13 +175,69 @@ def run_desktop() -> int:
     return 0
 
 
-def run_settings_window() -> int:
-    """Launch the native tkinter settings window. Invoked when the EXE is
-    started with --settings (or `python -m ayen_ode.settings_window` in source
-    mode)."""
-    from .settings_window import main as _settings_main
+def _read_fullscreen_preference() -> bool:
+    """Read AYEN_ODE_FULLSCREEN from %APPDATA%/Ayen-Ode/.env.
+
+    The env var is set on this process by config.load_dotenv, but we read the
+    file directly here because the dotenv call happens lazily and we need the
+    answer at window-creation time."""
+    from . import paths
+    env_path = paths.env_path()
+    if not env_path.exists():
+        return False
     try:
-        _settings_main()
-    except SystemExit as e:
-        return int(e.code or 0)
-    return 0
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            s = line.strip()
+            if s.startswith("AYEN_ODE_FULLSCREEN="):
+                return s.split("=", 1)[1].strip() == "1"
+    except OSError:
+        pass
+    return False
+
+
+class DesktopApi:
+    """Bridge exposed to the dashboard JS as `window.pywebview.api`.
+
+    pywebview injects these methods on every page load. The dashboard calls
+    them from the settings modal (toggle button) and from a keyboard handler
+    (F11). We don't persist fullscreen state here — that's done by the user
+    Save'ing in the settings panel, which writes AYEN_ODE_FULLSCREEN to .env
+    via the /api/settings POST route.
+    """
+
+    def __init__(self) -> None:
+        self._window = None  # type: ignore[var-annotated]
+
+    def bind_window(self, window: object) -> None:
+        self._window = window
+
+    # --- methods callable from JS via window.pywebview.api.<name>() -------
+
+    def toggle_fullscreen(self) -> bool:
+        """Flip fullscreen state. Returns True so JS can await the call."""
+        try:
+            if self._window is not None:
+                self._window.toggle_fullscreen()
+        except Exception:
+            pass
+        return True
+
+    def set_fullscreen(self, value: bool) -> bool:
+        """Force fullscreen to a specific state, idempotent if already there.
+        pywebview doesn't expose a direct setter, so we read current state
+        from the window object and toggle iff different."""
+        try:
+            if self._window is None:
+                return False
+            current = bool(getattr(self._window, "fullscreen", False))
+            if bool(value) != current:
+                self._window.toggle_fullscreen()
+        except Exception:
+            pass
+        return True
+
+    def is_desktop(self) -> bool:
+        """Sentinel the JS uses to detect 'are we in pywebview, not a browser?'.
+        If window.pywebview is defined the answer is implicitly yes, but this
+        gives a single explicit method to await."""
+        return True

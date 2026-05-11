@@ -142,7 +142,7 @@
         <button id="restartBtn" onclick="restartServer()" title="Restart the local server" class="bg-slate-800 hover:bg-slate-700 border border-slate-700/60 px-2.5 py-1.5 rounded-md text-slate-400 hover:text-emerald-400 transition-colors" aria-label="Restart server">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.95"/></svg>
         </button>
-        <button id="settingsBtn" onclick="openSettingsWindow()" title="Open desktop settings window" class="bg-slate-800 hover:bg-slate-700 border border-slate-700/60 px-2.5 py-1.5 rounded-md text-slate-400 hover:text-amber-400 transition-colors" aria-label="Settings">
+        <button id="settingsBtn" onclick="openSettingsModal()" title="Settings" class="bg-slate-800 hover:bg-slate-700 border border-slate-700/60 px-2.5 py-1.5 rounded-md text-slate-400 hover:text-amber-400 transition-colors" aria-label="Settings">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
         <button onclick="logout()" class="bg-red-950/60 hover:bg-red-900/80 border border-red-900/50 px-3 py-1.5 rounded-md text-sm text-red-400 hover:text-red-300 transition-colors">
@@ -161,9 +161,9 @@
       </div>
       <div class="flex-1">
         <p class="text-amber-200 text-sm font-medium">Anthropic API key not configured</p>
-        <p class="text-amber-400/70 text-xs mt-0.5">Open the desktop settings window to add your key. Worlds and narrative will fail without it.</p>
+        <p class="text-amber-400/70 text-xs mt-0.5">Open Settings to add your key. Worlds and narrative will fail without it.</p>
       </div>
-      <button onclick="openSettingsWindow()" class="bg-amber-800 hover:bg-amber-700 border border-amber-700/60 px-4 py-1.5 rounded-md text-sm font-medium text-amber-100 transition-colors whitespace-nowrap">
+      <button onclick="openSettingsModal()" class="bg-amber-800 hover:bg-amber-700 border border-amber-700/60 px-4 py-1.5 rounded-md text-sm font-medium text-amber-100 transition-colors whitespace-nowrap">
         Open Settings
       </button>
     </div>
@@ -250,6 +250,98 @@
       <div class="px-6 py-3 border-t border-slate-800 flex justify-end gap-2">
         <button onclick="closeDeleteModal()" class="text-slate-500 hover:text-slate-200 text-sm px-4 py-2 rounded-md hover:bg-slate-800 transition-colors">Cancel</button>
         <button onclick="confirmDelete()" class="bg-red-800 hover:bg-red-700 text-white text-sm px-4 py-2 rounded-md transition-colors font-medium">Delete Forever</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settingsModal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50" onclick="if (event.target === this) closeSettingsModal()">
+    <div class="bg-slate-900 rounded-xl max-w-lg w-full mx-4 border border-slate-700 shadow-2xl max-h-[85vh] flex flex-col">
+      <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+        <h3 class="font-semibold text-slate-100">Settings</h3>
+        <button onclick="closeSettingsModal()" class="text-slate-500 hover:text-slate-200 text-xs px-2 py-1 rounded hover:bg-slate-800" aria-label="Close">✕</button>
+      </div>
+      <div class="p-6 space-y-5 overflow-y-auto">
+
+        <!-- API key -->
+        <div>
+          <label class="block text-[10px] uppercase tracking-wide font-semibold text-slate-400 mb-1">Anthropic API Key</label>
+          <div class="flex gap-2">
+            <input id="settingApiKey" type="password" autocomplete="off"
+                   class="flex-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-slate-100 text-sm placeholder-slate-600 focus:outline-none focus:border-amber-600 focus:ring-1 focus:ring-amber-600"
+                   placeholder="sk-ant-…" />
+            <button type="button" onclick="toggleSettingSecret('settingApiKey', this)"
+                    class="text-slate-500 hover:text-slate-200 text-xs px-3 rounded-md border border-slate-700 hover:bg-slate-800">show</button>
+          </div>
+          <p id="settingApiKeyHint" class="text-[11px] text-slate-500 mt-1">Required for narrative actions.</p>
+        </div>
+
+        <!-- Login credentials (optional) -->
+        <details class="group">
+          <summary class="text-xs text-slate-400 cursor-pointer hover:text-slate-200 select-none">
+            <span class="group-open:hidden">Advanced ▸</span>
+            <span class="hidden group-open:inline">Advanced ▾</span>
+          </summary>
+          <div class="mt-3 space-y-4 pl-2 border-l border-slate-800">
+
+            <div>
+              <label class="block text-[10px] uppercase tracking-wide font-semibold text-slate-400 mb-1">Login Username</label>
+              <input id="settingUsername" type="text" autocomplete="off"
+                     class="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-slate-100 text-sm focus:outline-none focus:border-amber-600 focus:ring-1 focus:ring-amber-600"
+                     placeholder="(optional)" />
+            </div>
+
+            <div>
+              <label class="block text-[10px] uppercase tracking-wide font-semibold text-slate-400 mb-1">Login Password</label>
+              <div class="flex gap-2">
+                <input id="settingPassword" type="password" autocomplete="new-password"
+                       class="flex-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-slate-100 text-sm focus:outline-none focus:border-amber-600 focus:ring-1 focus:ring-amber-600"
+                       placeholder="(optional)" />
+                <button type="button" onclick="toggleSettingSecret('settingPassword', this)"
+                        class="text-slate-500 hover:text-slate-200 text-xs px-3 rounded-md border border-slate-700 hover:bg-slate-800">show</button>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-[10px] uppercase tracking-wide font-semibold text-slate-400 mb-1">Allowed Client IPs</label>
+              <input id="settingAllowedIps" type="text"
+                     class="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-slate-100 text-sm focus:outline-none focus:border-amber-600 focus:ring-1 focus:ring-amber-600"
+                     placeholder="comma-separated (blank = any)" />
+            </div>
+
+            <div>
+              <label class="block text-[10px] uppercase tracking-wide font-semibold text-slate-400 mb-1">Server Port</label>
+              <input id="settingPort" type="text"
+                     class="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-slate-100 text-sm focus:outline-none focus:border-amber-600 focus:ring-1 focus:ring-amber-600"
+                     placeholder="8000" />
+              <p class="text-[11px] text-slate-500 mt-1">Ignored in desktop mode (a free port is picked at launch).</p>
+            </div>
+          </div>
+        </details>
+
+        <!-- Display options (desktop only) -->
+        <div id="settingDisplayBlock" class="hidden border-t border-slate-800 pt-5">
+          <p class="block text-[10px] uppercase tracking-wide font-semibold text-slate-400 mb-3">Display</p>
+          <label class="flex items-center gap-3 cursor-pointer">
+            <input id="settingFullscreen" type="checkbox"
+                   class="w-4 h-4 rounded border-slate-600 bg-slate-950 text-amber-600 focus:ring-amber-600 focus:ring-1 cursor-pointer" />
+            <span class="text-sm text-slate-200">Start in fullscreen</span>
+          </label>
+          <div class="mt-3 flex gap-2 items-center">
+            <button onclick="toggleFullscreenNow()" type="button"
+                    class="bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 rounded-md text-xs text-slate-200 transition-colors">
+              Toggle fullscreen now
+            </button>
+            <span class="text-[11px] text-slate-500">(or press F11)</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="px-6 py-3 border-t border-slate-800 flex items-center gap-2">
+        <span id="settingsStatus" class="text-[11px] text-slate-500 mr-auto"></span>
+        <button onclick="closeSettingsModal()" class="text-slate-500 hover:text-slate-200 text-sm px-4 py-2 rounded-md hover:bg-slate-800 transition-colors">Cancel</button>
+        <button id="settingsSaveBtn" onclick="saveSettings(false)" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-100 text-sm px-4 py-2 rounded-md transition-colors">Save</button>
+        <button id="settingsSaveRestartBtn" onclick="saveSettings(true)" class="bg-amber-700 hover:bg-amber-600 text-white text-sm px-4 py-2 rounded-md transition-colors font-medium">Save &amp; Restart</button>
       </div>
     </div>
   </div>
@@ -343,15 +435,7 @@
       }, 500);
     }
 
-    // --- Settings window launcher ---
-    async function openSettingsWindow() {
-      const result = await apiCall("/api/settings/launch", "POST", {});
-      if (result && result.ok) {
-        flashSettingsHint("Settings window opened on your desktop");
-      } else if (result && result.error) {
-        flashSettingsHint(result.error, true);
-      }
-    }
+    // --- In-window settings modal ---
 
     function flashSettingsHint(text, isError) {
       const toast = document.createElement("div");
@@ -361,6 +445,120 @@
       document.body.appendChild(toast);
       setTimeout(() => toast.remove(), 3200);
     }
+
+    function toggleSettingSecret(inputId, btn) {
+      const el = document.getElementById(inputId);
+      if (!el) return;
+      const showing = el.type === "text";
+      el.type = showing ? "password" : "text";
+      if (btn) btn.textContent = showing ? "show" : "hide";
+    }
+
+    async function openSettingsModal() {
+      const modal = document.getElementById("settingsModal");
+      modal.classList.remove("hidden");
+      document.getElementById("settingsStatus").textContent = "Loading…";
+
+      // Show the Display block only when we're actually in pywebview.
+      // window.pywebview is injected by the launcher; in a regular browser it's undefined.
+      if (window.pywebview && window.pywebview.api) {
+        document.getElementById("settingDisplayBlock").classList.remove("hidden");
+      } else {
+        document.getElementById("settingDisplayBlock").classList.add("hidden");
+      }
+
+      // Reset the API key field — it's write-only from the server's perspective,
+      // we never receive the actual value back.
+      document.getElementById("settingApiKey").value = "";
+
+      const data = await apiCall("/api/settings");
+      if (!data) {
+        document.getElementById("settingsStatus").textContent = "";
+        return;
+      }
+      const hint = document.getElementById("settingApiKeyHint");
+      if (data.anthropic_api_key_set) {
+        document.getElementById("settingApiKey").placeholder = data.anthropic_api_key_masked || "(set)";
+        hint.textContent = "A key is already saved. Type a new one to replace it, or leave blank to keep it.";
+        hint.classList.remove("text-amber-400");
+      } else {
+        document.getElementById("settingApiKey").placeholder = "sk-ant-…";
+        hint.textContent = "Required for narrative actions.";
+      }
+      document.getElementById("settingUsername").value     = data.app_username || "";
+      document.getElementById("settingPassword").value     = "";
+      document.getElementById("settingPassword").placeholder = data.app_password_set ? "(unchanged)" : "(optional)";
+      document.getElementById("settingAllowedIps").value   = data.allowed_ips || "";
+      document.getElementById("settingPort").value         = data.ayen_ode_port || "";
+      document.getElementById("settingFullscreen").checked = !!data.fullscreen;
+      document.getElementById("settingsStatus").textContent = "";
+    }
+
+    function closeSettingsModal() {
+      document.getElementById("settingsModal").classList.add("hidden");
+      document.getElementById("settingsStatus").textContent = "";
+    }
+
+    async function saveSettings(restart) {
+      const payload = {};
+      const apiKey = document.getElementById("settingApiKey").value.trim();
+      if (apiKey) payload.ANTHROPIC_API_KEY = apiKey;
+      const username = document.getElementById("settingUsername").value;
+      if (username) payload.APP_USERNAME = username.trim();
+      const password = document.getElementById("settingPassword").value;
+      if (password) payload.APP_PASSWORD = password;
+      const allowedIps = document.getElementById("settingAllowedIps").value;
+      if (allowedIps) payload.ALLOWED_IPS = allowedIps.trim();
+      const port = document.getElementById("settingPort").value;
+      if (port) payload.AYEN_ODE_PORT = port.trim();
+      // Fullscreen always sent — it's a binary checkbox, no ambiguity.
+      payload.AYEN_ODE_FULLSCREEN = document.getElementById("settingFullscreen").checked ? "1" : "0";
+
+      document.getElementById("settingsStatus").textContent = "Saving…";
+      const result = await apiCall("/api/settings", "POST", payload);
+      if (!result || !result.ok) {
+        const err = (result && result.error) || "Save failed";
+        document.getElementById("settingsStatus").textContent = err;
+        return;
+      }
+
+      // Mirror the persisted fullscreen choice to the live pywebview window so
+      // the user sees an immediate effect without restarting.
+      if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.set_fullscreen === "function") {
+        try { await window.pywebview.api.set_fullscreen(payload.AYEN_ODE_FULLSCREEN === "1"); } catch (e) {}
+      }
+
+      if (restart) {
+        document.getElementById("settingsStatus").textContent = "Saved. Restarting…";
+        await apiCall("/api/restart", "POST", {});
+        // The EXE exits with code 42; the window will close. Brief delay before
+        // closing the modal so the user reads the message.
+        setTimeout(closeSettingsModal, 600);
+      } else {
+        document.getElementById("settingsStatus").textContent = "Saved. Restart to apply API key changes.";
+        await checkApiKeyStatus();
+      }
+    }
+
+    async function toggleFullscreenNow() {
+      if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.toggle_fullscreen === "function") {
+        try { await window.pywebview.api.toggle_fullscreen(); } catch (e) {}
+      } else if (document.fullscreenElement) {
+        document.exitFullscreen();
+      } else {
+        document.documentElement.requestFullscreen?.();
+      }
+    }
+
+    // Close on Escape, even when focus is in an input.
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        const modal = document.getElementById("settingsModal");
+        if (modal && !modal.classList.contains("hidden")) {
+          closeSettingsModal();
+        }
+      }
+    });
 
     async function checkApiKeyStatus() {
       const status = await apiCall("/api/settings/status");

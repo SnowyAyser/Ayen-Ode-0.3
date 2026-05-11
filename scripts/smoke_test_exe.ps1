@@ -122,31 +122,57 @@ try {
     if ($worlds.StatusCode -ne 200) { Write-Fail "/api/worlds with token returned $($worlds.StatusCode)" }
     Write-Pass "/desktop-bootstrap to /api/worlds round-trip works"
 
-    Write-Step "Spawning Ayen-Ode.exe --settings directly (must not crash)"
-    $settingsProc = Start-Process -FilePath $ExePath -ArgumentList "--settings" -PassThru -WindowStyle Hidden
-    Start-Sleep -Milliseconds 2500
-    if ($settingsProc.HasExited) {
-        $code = $settingsProc.ExitCode
-        if ($code -ne 0) {
-            Write-Fail "settings-window subprocess died with exit code $code (likely an import/syntax error in settings_window.py)"
+    Write-Step "Confirming the removed /api/settings/launch route is GONE"
+    try {
+        $r = Invoke-WebRequest -Uri "$url/api/settings/launch" -Method POST -Headers @{ "Authorization" = "Bearer $token" } -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
+        Write-Fail "/api/settings/launch still responds ($($r.StatusCode)); should be 404/405"
+    } catch {
+        $sc = $_.Exception.Response.StatusCode.value__
+        if ($sc -in 404, 405) {
+            Write-Pass "/api/settings/launch is correctly gone (HTTP $sc)"
+        } else {
+            Write-Fail "/api/settings/launch unexpected error: $_"
         }
-        Write-Host "    Subprocess exited cleanly with code 0, odd for a GUI app but not a failure." -ForegroundColor Yellow
-    }
-    else {
-        Write-Pass "Settings window subprocess alive after 2.5s (GUI opened)"
-        Stop-Process -Id $settingsProc.Id -Force -ErrorAction SilentlyContinue
     }
 
-    Write-Step "Triggering /api/settings/launch (same code path as dashboard Settings button)"
-    $beforeCount = (Get-Process -Name "Ayen-Ode" -ErrorAction SilentlyContinue | Measure-Object).Count
-    $r = Invoke-WebRequest -Uri "$url/api/settings/launch" -Method POST -Headers @{ "Authorization" = "Bearer $token" } -UseBasicParsing -TimeoutSec 5
-    if ($r.StatusCode -ne 200) { Write-Fail "/api/settings/launch returned $($r.StatusCode)" }
-    Start-Sleep -Milliseconds 2500
-    $afterCount = (Get-Process -Name "Ayen-Ode" -ErrorAction SilentlyContinue | Measure-Object).Count
-    if ($afterCount -le $beforeCount) {
-        Write-Fail "After /api/settings/launch, Ayen-Ode process count went from $beforeCount to $afterCount (spawned settings subprocess died immediately)"
+    Write-Step "GET /api/settings (returns current values, API key masked)"
+    $sg = Invoke-WebRequest -Uri "$url/api/settings" -Headers @{ "Authorization" = "Bearer $token" } -UseBasicParsing -TimeoutSec 3
+    if ($sg.StatusCode -ne 200) { Write-Fail "GET /api/settings returned $($sg.StatusCode)" }
+    $settings = $sg.Content | ConvertFrom-Json
+    foreach ($field in @("anthropic_api_key_set", "anthropic_api_key_masked", "app_username", "app_password_set", "allowed_ips", "ayen_ode_port", "fullscreen")) {
+        if (-not ($settings.PSObject.Properties.Name -contains $field)) {
+            Write-Fail "GET /api/settings response missing field '$field'"
+        }
     }
-    Write-Pass "/api/settings/launch spawned a live settings subprocess ($beforeCount -> $afterCount processes)"
+    Write-Pass "GET /api/settings returns all expected fields"
+
+    Write-Step "POST /api/settings round-trips AYEN_ODE_FULLSCREEN=1"
+    $sp = Invoke-WebRequest -Uri "$url/api/settings" -Method POST `
+        -Headers @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" } `
+        -Body '{"AYEN_ODE_FULLSCREEN":"1"}' -UseBasicParsing -TimeoutSec 3
+    if ($sp.StatusCode -ne 200) { Write-Fail "POST /api/settings returned $($sp.StatusCode)" }
+    $wrote = ($sp.Content | ConvertFrom-Json).wrote
+    if (-not ($wrote -contains "AYEN_ODE_FULLSCREEN")) {
+        Write-Fail "POST /api/settings didn't write AYEN_ODE_FULLSCREEN (wrote: $($wrote -join ','))"
+    }
+    # Verify it now comes back from a subsequent GET
+    $sg2 = (Invoke-WebRequest -Uri "$url/api/settings" -Headers @{ "Authorization" = "Bearer $token" } -UseBasicParsing -TimeoutSec 3).Content | ConvertFrom-Json
+    if (-not $sg2.fullscreen) { Write-Fail "After POST, GET /api/settings still reports fullscreen=false" }
+    # And confirm .env on disk actually has the line
+    $envOnDisk = Get-Content (Join-Path $sandbox ".env") -Raw
+    if ($envOnDisk -notmatch "AYEN_ODE_FULLSCREEN=1") {
+        Write-Fail ".env on disk does not contain AYEN_ODE_FULLSCREEN=1 after POST"
+    }
+    Write-Pass "POST /api/settings round-trips correctly and persists to .env"
+
+    Write-Step "Dashboard HTML contains the new in-window settings modal markup"
+    $dash = Invoke-WebRequest -Uri "$url/dashboard.html" -UseBasicParsing -TimeoutSec 3
+    foreach ($marker in @('id="settingsModal"', 'openSettingsModal', 'toggleFullscreenNow', 'settingFullscreen')) {
+        if ($dash.Content -notmatch [regex]::Escape($marker)) {
+            Write-Fail "dashboard.html missing expected marker: $marker"
+        }
+    }
+    Write-Pass "dashboard.html has settings modal + fullscreen controls"
 
     Write-Host ""
     Write-Host "All smoke checks passed." -ForegroundColor Green

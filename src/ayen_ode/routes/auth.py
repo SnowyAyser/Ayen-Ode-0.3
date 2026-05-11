@@ -104,38 +104,111 @@ def make_auth_routes(service: Any, settings: Any, sessions: Any) -> list:
             "stale": configured and api_key != settings.anthropic_api_key,
         })
 
-    async def settings_launch_handler(request: Request) -> JSONResponse:
-        # Localhost-only by design — the native window opens on the server's
-        # desktop, so a remote client clicking this would do nothing useful and
-        # could be abused to spawn subprocesses.
+    # Settings live inside the dashboard now (see static/dashboard.html).
+    # The old subprocess-Tk path is gone; settings_window.py is kept only for
+    # devs who want `python -m ayen_ode.settings_window` in source mode.
+    # The two routes below back the in-window modal.
+
+    # Whitelist of keys the user can edit through the in-window settings panel.
+    # Anything else in a POST body is dropped on the floor.
+    _EDITABLE_KEYS = (
+        "ANTHROPIC_API_KEY",
+        "APP_USERNAME",
+        "APP_PASSWORD",
+        "ALLOWED_IPS",
+        "AYEN_ODE_PORT",
+        "AYEN_ODE_FULLSCREEN",  # 1/0 — persisted fullscreen preference for the next launch
+    )
+
+    def _parse_env(text: str) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for line in text.splitlines():
+            s = line.strip()
+            if not s or s.startswith("#") or "=" not in s:
+                continue
+            k, v = s.split("=", 1)
+            out[k.strip()] = v.strip()
+        return out
+
+    def _mask(value: str) -> str:
+        if not value or value == "sk-ant-...":
+            return ""
+        if len(value) <= 8:
+            return "•" * len(value)
+        return value[:7] + "…" + value[-4:]
+
+    async def settings_get_handler(request: Request) -> JSONResponse:
+        """Return current user-editable settings from %APPDATA%/Ayen-Ode/.env.
+        The API key and password are masked — write-only from the client's
+        perspective. The fullscreen flag is reported verbatim as "1" or "0"."""
         ip = _client_ip(request)
         if not _is_loopback(ip):
-            return JSONResponse({"error": "Settings window can only be opened from localhost"}, status_code=403)
-        try:
-            kwargs: dict[str, Any] = {
-                "stdout": subprocess.DEVNULL,
-                "stderr": subprocess.DEVNULL,
-                "stdin": subprocess.DEVNULL,
-                "close_fds": True,
-            }
-            if sys.platform == "win32":
-                kwargs["creationflags"] = 0x00000008 | 0x00000200  # DETACHED | NEW_PROCESS_GROUP
-            else:
-                kwargs["start_new_session"] = True
+            return JSONResponse({"error": "Settings only available from localhost"}, status_code=403)
+        env_path = paths.env_path()
+        values: dict[str, str] = {}
+        if env_path.exists():
+            try:
+                values = _parse_env(env_path.read_text(encoding="utf-8"))
+            except OSError:
+                pass
+        api_key = values.get("ANTHROPIC_API_KEY", "")
+        api_key_set = bool(api_key) and api_key != "sk-ant-..."
+        return JSONResponse({
+            "anthropic_api_key_masked": _mask(api_key) if api_key_set else "",
+            "anthropic_api_key_set": api_key_set,
+            "anthropic_api_key_stale": api_key_set and api_key != settings.anthropic_api_key,
+            "app_username": values.get("APP_USERNAME", ""),
+            "app_password_set": bool(values.get("APP_PASSWORD", "")),
+            "allowed_ips": values.get("ALLOWED_IPS", ""),
+            "ayen_ode_port": values.get("AYEN_ODE_PORT", ""),
+            "fullscreen": values.get("AYEN_ODE_FULLSCREEN", "") == "1",
+        })
 
-            if paths.is_frozen():
-                # In a PyInstaller bundle, sys.executable IS the app EXE.
-                # Re-launch ourselves with the --settings flag (handled in desktop_launcher).
-                subprocess.Popen([sys.executable, "--settings"], **kwargs)
-            else:
-                kwargs["cwd"] = str(paths.bundle_dir())
-                subprocess.Popen(
-                    [sys.executable, "-m", "ayen_ode.settings_window"],
-                    **kwargs,
-                )
+    async def settings_post_handler(request: Request) -> JSONResponse:
+        """Write a subset of settings to %APPDATA%/Ayen-Ode/.env.
+
+        Empty string values are ignored (so leaving a field blank doesn't wipe
+        an existing secret). To explicitly clear a value, send the sentinel
+        `__clear__`. Comments and key order in .env are preserved by
+        settings_window.write_env, which we reuse."""
+        ip = _client_ip(request)
+        if not _is_loopback(ip):
+            return JSONResponse({"error": "Settings only editable from localhost"}, status_code=403)
+        try:
+            data = await request.json()
+        except Exception:
+            return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+        if not isinstance(data, dict):
+            return JSONResponse({"error": "Expected a JSON object"}, status_code=400)
+
+        to_write: dict[str, str] = {}
+        for key in _EDITABLE_KEYS:
+            if key not in data:
+                continue
+            val = data[key]
+            if not isinstance(val, (str, bool, int)):
+                continue
+            if isinstance(val, bool):
+                val = "1" if val else "0"
+            elif isinstance(val, int):
+                val = str(val)
+            val = val.strip()
+            if val == "":
+                continue  # don't clobber existing values with empty
+            if val == "__clear__":
+                val = ""
+            to_write[key] = val
+
+        if not to_write:
+            return JSONResponse({"ok": True, "wrote": []})
+
+        try:
+            from ..settings_window import write_env
+            write_env(to_write)
         except OSError as e:
-            return JSONResponse({"error": f"Could not launch settings window: {e}"}, status_code=500)
-        return JSONResponse({"ok": True})
+            return JSONResponse({"error": f"Could not write .env: {e}"}, status_code=500)
+
+        return JSONResponse({"ok": True, "wrote": sorted(to_write.keys())})
 
     async def restart_handler(request: Request) -> JSONResponse:
         # Localhost-only — same policy as settings/launch.
@@ -193,6 +266,7 @@ def make_auth_routes(service: Any, settings: Any, sessions: Any) -> list:
         Route("/api/login", login_handler, methods=["POST"]),
         Route("/api/logout", logout_handler, methods=["POST"]),
         Route("/api/settings/status", settings_status_handler, methods=["GET"]),
-        Route("/api/settings/launch", settings_launch_handler, methods=["POST"]),
+        Route("/api/settings", settings_get_handler, methods=["GET"]),
+        Route("/api/settings", settings_post_handler, methods=["POST"]),
         Route("/api/restart", restart_handler, methods=["POST"]),
     ]
