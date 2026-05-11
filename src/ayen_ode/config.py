@@ -16,13 +16,20 @@ from anthropic import Anthropic
 
 from . import paths
 
-# Seed %APPDATA%/Ayen-Ode/.env from the bundled .env.example on first run (frozen
-# builds), then point dotenv at the user-writable .env regardless of cwd.
+# Seed %APPDATA%/Ayen-Ode/.env from the bundled .env.example on first run
+# (frozen builds), then point dotenv at the user-writable .env regardless of cwd.
 paths.ensure_user_dir()
 load_dotenv(paths.env_path(), override=False)
-# Fall back to dotenv's cwd-based search too, so devs running `python -m ayen_ode`
-# from anywhere still pick up a project-root .env.
-load_dotenv(override=False)
+
+# In source mode also do a cwd-based search so devs running `python -m ayen_ode`
+# from anywhere still pick up the repo-root .env. We deliberately DO NOT do this
+# in frozen mode: the EXE must be hermetic. If we let the cwd .env leak in, a
+# user double-clicking Ayen-Ode.exe from a directory that happens to contain a
+# dev .env (with TURSO_*, ALLOWED_IPS, etc.) would inherit those settings —
+# breaking the "click-and-run, no config required" desktop UX. The only env
+# source for frozen builds is %APPDATA%/Ayen-Ode/.env, edited via Settings.
+if not paths.is_frozen():
+    load_dotenv(override=False)
 
 # ---------------------------------------------------------------------------
 # Model constants

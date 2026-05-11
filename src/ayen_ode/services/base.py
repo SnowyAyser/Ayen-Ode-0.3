@@ -109,15 +109,29 @@ class _TursoConnection:
 
 
 def make_db_connection(db_path: Path) -> Any:
-    """Return a Turso connection when env vars are set, otherwise local SQLite.
+    """Return a Turso connection when env vars are set AND libsql_experimental
+    is importable. Otherwise fall back to local SQLite at `db_path`.
 
-    Used by both BaseService.connect() and SessionStore in server.py so that
-    all DB access goes to the same backend.
+    The graceful fallback exists because libsql_experimental currently has no
+    Python 3.12 Windows wheel (the source build segfaults during metadata gen),
+    so frozen desktop builds ship without it. Without the fallback, any
+    TURSO_DATABASE_URL leaking into the env would crash the EXE on startup.
+
+    Used by both BaseService.connect() and SessionStore in server.py so all
+    DB access goes to the same backend.
     """
     turso_url = os.getenv("TURSO_DATABASE_URL", "").strip()
     turso_token = os.getenv("TURSO_AUTH_TOKEN", "").strip()
     if turso_url and turso_token:
-        return _TursoConnection(turso_url, turso_token)
+        try:
+            import libsql_experimental  # noqa: F401  — probe for importability
+            return _TursoConnection(turso_url, turso_token)
+        except ImportError:
+            import sys
+            sys.stderr.write(
+                "Ayen-Ode: TURSO_DATABASE_URL is set but libsql_experimental "
+                "is not installed in this build. Falling back to local SQLite.\n"
+            )
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
