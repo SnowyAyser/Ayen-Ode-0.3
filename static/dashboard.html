@@ -148,6 +148,9 @@
         <button onclick="logout()" class="bg-red-950/60 hover:bg-red-900/80 border border-red-900/50 px-3 py-1.5 rounded-md text-sm text-red-400 hover:text-red-300 transition-colors">
           Logout
         </button>
+        <button id="closeWindowBtn" onclick="closeAppWindow()" class="hidden bg-slate-800 hover:bg-red-950/60 border border-slate-700/60 hover:border-red-900/50 px-3 py-1.5 rounded-md text-sm text-slate-300 hover:text-red-400 transition-all duration-150">
+          Quit
+        </button>
       </div>
     </div>
   </header>
@@ -821,6 +824,21 @@
         sessionStorage.removeItem('replayIntro');
       }
     });
+
+    function closeAppWindow() {
+      if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.close_window === "function") {
+        window.pywebview.api.close_window();
+      }
+    }
+
+    function initDesktopControls() {
+      if (window.pywebview && window.pywebview.api) {
+        document.getElementById("closeWindowBtn")?.classList.remove("hidden");
+      }
+    }
+    window.addEventListener('pywebviewready', initDesktopControls);
+    window.addEventListener('DOMContentLoaded', initDesktopControls);
+    initDesktopControls();
   </script>
 </body>
 </html>

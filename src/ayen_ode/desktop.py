@@ -82,6 +82,16 @@ def run_desktop() -> int:
     os.environ["AYEN_ODE_DESKTOP"] = "1"
     os.environ["AYEN_ODE_RELOAD"] = "0"
 
+    # Set up the persistent WebView2 user data folder as early as possible so
+    # the runtime respects it on startup before any WebView2 code initializes.
+    from . import paths
+    webview_storage = paths.user_data_dir() / "webview_data"
+    try:
+        webview_storage.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    os.environ["WEBVIEW2_USER_DATA_FOLDER"] = str(webview_storage)
+
     # Honour AYEN_ODE_PORT if already set (useful for tests / scripted launches);
     # otherwise grab a free ephemeral port on loopback.
     preset = os.environ.get("AYEN_ODE_PORT", "").strip()
@@ -148,7 +158,7 @@ def run_desktop() -> int:
     api = DesktopApi()
     window = webview.create_window(
         title="Ayen-Ode",
-        url=base_url + "/desktop-bootstrap",
+        url=base_url + "/",
         width=1280,
         height=820,
         min_size=(960, 640),
@@ -159,11 +169,24 @@ def run_desktop() -> int:
     )
     api.bind_window(window)
 
+    # Force Edge WebView2 and pywebview to write persistent local data to %APPDATA%/Ayen-Ode/webview_data
+    # (or the repository root in source/dev mode) so localStorage (e.g. savedUsername) is remembered.
+    webview_storage = paths.user_data_dir() / "webview_data"
+    try:
+        webview_storage.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    os.environ["WEBVIEW2_USER_DATA_FOLDER"] = str(webview_storage)
+
     # gui="edgechromium" forces the Edge WebView2 backend on Windows. On other
     # platforms pywebview picks the best available backend automatically.
     gui_backend = "edgechromium" if sys.platform == "win32" else None
     try:
-        webview.start(gui=gui_backend)
+        webview.start(
+            gui=gui_backend,
+            private_mode=False,
+            storage_path=str(webview_storage)
+        )
     finally:
         # Once the user closes the window, ask uvicorn to shut down so the
         # daemon thread doesn't keep the process alive on some platforms.
@@ -241,3 +264,37 @@ class DesktopApi:
         If window.pywebview is defined the answer is implicitly yes, but this
         gives a single explicit method to await."""
         return True
+
+    def close_window(self) -> bool:
+        """Close the application window and exit the process. Returns True so JS can await it."""
+        try:
+            if self._window is not None:
+                self._window.destroy()
+        except Exception:
+            pass
+        return True
+
+    def get_saved_username(self) -> str:
+        """Get the saved username from user_data_dir to bypass Same-Origin port isolation."""
+        try:
+            from . import paths
+            p = paths.user_data_dir() / "saved_username.txt"
+            if p.exists():
+                username = p.read_text(encoding="utf-8").strip()
+                print(f"[DesktopApi] get_saved_username read: {username}")
+                return username
+        except Exception as e:
+            print(f"[DesktopApi] get_saved_username error: {e}")
+        return ""
+
+    def save_username(self, username: str) -> bool:
+        """Save the username to user_data_dir to bypass Same-Origin port isolation."""
+        try:
+            from . import paths
+            p = paths.user_data_dir() / "saved_username.txt"
+            p.write_text(username.strip(), encoding="utf-8")
+            print(f"[DesktopApi] save_username wrote: {username}")
+            return True
+        except Exception as e:
+            print(f"[DesktopApi] save_username error: {e}")
+        return False

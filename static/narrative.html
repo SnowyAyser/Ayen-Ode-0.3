@@ -225,6 +225,9 @@
         <button onclick="logout()" class="bg-red-950/60 hover:bg-red-900/80 border border-red-900/50 hover:border-red-800 px-3 py-1.5 rounded-md text-sm text-red-400 hover:text-red-300 transition-colors duration-150">
           Logout
         </button>
+        <button id="closeWindowBtn" onclick="closeAppWindow()" class="hidden bg-slate-800 hover:bg-red-950/60 border border-slate-700/60 hover:border-red-900/50 px-3 py-1.5 rounded-md text-sm text-slate-300 hover:text-red-400 transition-all duration-150">
+          Quit
+        </button>
       </div>
     </div>
   </header>
@@ -435,4 +438,33 @@
   <!-- Investigation retry toast (briefly flashes when a failed investigation auto-retries) -->
   <div id="investigationToast" class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-800 border border-amber-700/60 text-slate-200 text-sm px-4 py-2.5 rounded-lg shadow-xl z-50 flex items-center gap-2 pointer-events-none">
     <svg class="w-4 h-4 text-amber-400 flex-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path stroke-linecap="round" str
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 6H16"/>
+    </svg>
+    <span>Investigation failed. Retrying...</span>
+  </div>
+
+  <script src="/static/clover-loader.js"></script>
+  <script src="/static/app.js"></script>
+  <script src="/static/narrative.js"></script>
+  <script src="/static/narrative-investigation.js"></script>
+  <script src="/static/narrative-entity.js"></script>
+  <script src="/static/narrative-worlds.js"></script>
+  <script src="/static/narrative-quests.js"></script>
+  <script>
+    function closeAppWindow() {
+      if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.close_window === "function") {
+        window.pywebview.api.close_window();
+      }
+    }
+
+    function initDesktopControls() {
+      if (window.pywebview && window.pywebview.api) {
+        document.getElementById("closeWindowBtn")?.classList.remove("hidden");
+      }
+    }
+    window.addEventListener('pywebviewready', initDesktopControls);
+    window.addEventListener('DOMContentLoaded', initDesktopControls);
+    initDesktopControls();
+  </script>
+</body>
+</html>

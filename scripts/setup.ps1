@@ -1,4 +1,4 @@
-﻿# Ayen-Ode setup + run script (Windows)
+# Ayen-Ode setup + run script (Windows)
 #
 # Idempotent: first run installs everything; subsequent runs skip finished
 # steps and just start the server. Re-run any time you want to start the
@@ -66,13 +66,21 @@ if (-not (Test-Path $VenvPy)) {
     & $Python[0] $Python[1..($Python.Count-1)] -m venv "$Root\.venv"
 }
 
-# --- Step 3: install deps if anthropic isn't present ---
-& $VenvPy -c "import anthropic" 2>$null
+# --- Step 3: install deps (base + desktop GUI: customtkinter) ---
+# Use try/catch so PowerShell's Stop preference doesn't treat a failed import as fatal.
+try { & $VenvPy -c "import anthropic" 2>&1 | Out-Null } catch {}
 if ($LASTEXITCODE -ne 0) {
     Write-Host ">> Installing dependencies ..." -ForegroundColor Cyan
     & $VenvPy -m pip install --upgrade pip
-    & $VenvPy -m pip install -e .
+    & $VenvPy -m pip install -e ".[desktop]"
     if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: pip install failed." -ForegroundColor Red; exit 1 }
+} else {
+    # Ensure customtkinter is present even if base deps were already installed.
+    try { & $VenvPy -c "import customtkinter" 2>&1 | Out-Null } catch {}
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ">> Installing desktop extras (customtkinter) ..." -ForegroundColor Cyan
+        & $VenvPy -m pip install -e ".[desktop]" --quiet
+    }
 }
 
 # --- Step 4: .env ---
@@ -100,8 +108,8 @@ if ($NeedsKey) {
 # --- Step 5: data dir ---
 New-Item -ItemType Directory -Force -Path (Join-Path $Root "data") | Out-Null
 
-# --- Step 6: launch server ---
+# --- Step 6: launch desktop app ---
 Write-Host ""
-Write-Host ">> Starting server on http://localhost:8000  (Ctrl-C to stop)" -ForegroundColor Green
+Write-Host ">> Launching Ayen-Ode desktop app ..." -ForegroundColor Green
 Write-Host ""
-& $VenvPy -m ayen_ode
+& $VenvPy -m ayen_ode.desktop_launcher

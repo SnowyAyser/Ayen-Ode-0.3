@@ -13,7 +13,6 @@ dependencies = [
   "starlette>=0.37,<1",
   "python-dotenv>=1.0,<2",
   "anthropic>=0.28,<1",
-  "libsql-experimental>=0.0.27",
 ]
 
 [project.optional-dependencies]
@@ -22,10 +21,16 @@ dev = [
 ]
 desktop = [
   "pywebview>=5,<6",
+  "customtkinter>=5.2,<6",
 ]
 build = [
   "pywebview>=5,<6",
   "pyinstaller>=6.10,<7",
+]
+# Only needed when TURSO_DATABASE_URL is set (cloud database).
+# Requires Rust + MSVC build tools to compile on Windows.
+turso = [
+  "libsql-experimental>=0.0.27",
 ]
 
 [project.scripts]
@@ -35,4 +40,4 @@ ayen-ode = "ayen_ode.server:main"
 where = ["src"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"] 
+testpaths = ["tests"]

@@ -25,9 +25,14 @@
         <span class="text-slate-700">·</span>
         <span id="world-name" class="text-sm text-slate-500 italic">no active world</span>
       </div>
-      <div class="flex items-center gap-2">
-        <div id="poll-dot" class="w-1.5 h-1.5 rounded-full bg-slate-700 transition-colors duration-200"></div>
-        <span class="text-xs text-slate-600">2s poll</span>
+      <div class="flex items-center gap-4">
+        <div class="flex items-center gap-2">
+          <div id="poll-dot" class="w-1.5 h-1.5 rounded-full bg-slate-700 transition-colors duration-200"></div>
+          <span class="text-xs text-slate-600">2s poll</span>
+        </div>
+        <button id="closeWindowBtn" onclick="closeAppWindow()" class="hidden bg-slate-800 hover:bg-red-950/60 border border-slate-700/60 hover:border-red-900/50 px-2.5 py-1 rounded-md text-[11px] font-medium text-slate-400 hover:text-red-400 transition-all duration-150">
+          Quit
+        </button>
       </div>
     </div>
 
@@ -211,8 +216,20 @@
 <script src="/static/debug-panels.js"></script>
 <script src="/static/debug-intake.js"></script>
 <script>
-// Legacy inline block — all code moved to external JS files
-void 0;
+  function closeAppWindow() {
+    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.close_window === "function") {
+      window.pywebview.api.close_window();
+    }
+  }
+
+  function initDesktopControls() {
+    if (window.pywebview && window.pywebview.api) {
+      document.getElementById("closeWindowBtn")?.classList.remove("hidden");
+    }
+  }
+  window.addEventListener('pywebviewready', initDesktopControls);
+  window.addEventListener('DOMContentLoaded', initDesktopControls);
+  initDesktopControls();
 </script>
 </body>
 </html>

@@ -26,6 +26,11 @@
 </head>
 <body class="bg-gradient-to-br from-slate-900 to-slate-800 min-h-screen flex items-center justify-center">
 
+  <!-- Top-right Quit button (desktop only) -->
+  <button id="closeWindowBtn" onclick="closeAppWindow()" class="hidden fixed top-4 right-4 z-40 bg-slate-800/60 hover:bg-red-950/60 border border-slate-700/50 hover:border-red-900/50 px-3.5 py-1.5 rounded-full text-xs text-slate-400 hover:text-red-400 transition-all duration-150 backdrop-blur-sm select-none">
+    Quit
+  </button>
+
   <!-- Fullscreen loader overlay -->
   <div id="loaderOverlay">
     <canvas id="cloverCanvas" width="220" height="220"></canvas>
@@ -34,7 +39,7 @@
   <div class="w-full max-w-md">
     <div class="bg-slate-800 rounded-lg shadow-xl p-8 border border-slate-700">
       <h1 class="text-3xl font-bold text-white mb-2 text-center">Ayen-Ode</h1>
-      <p class="text-slate-400 text-center mb-8">Sign in to continue</p>
+      <p class="text-slate-400 text-center mb-8">Press Enter to continue</p>
 
       <form id="loginForm" class="space-y-6">
         <div>
@@ -46,7 +51,6 @@
             id="username"
             placeholder="username"
             class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-            required
             autocomplete="username"
           />
         </div>
@@ -60,7 +64,6 @@
             id="password"
             placeholder="••••••••"
             class="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-            required
             autocomplete="current-password"
           />
         </div>
@@ -79,17 +82,183 @@
 
   <script src="/static/app.js"></script>
   <script>
-    if (hasToken()) {
-      window.location.href = "/dashboard.html";
-    }
+    // ── Login form handler ───────────────────────────────────────────────────
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
 
-    // --- Clover animation ---
+      const username = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+      const errorEl  = document.getElementById('error');
+      errorEl.classList.add('hidden');
+
+      // Show loader animation while waiting.
+      document.getElementById('loaderOverlay').classList.add('visible');
+      if (!animating) startAnimation();
+
+      try {
+        const resp = await fetch('/api/login', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ username, password }),
+        });
+
+        const data = await resp.json();
+
+        if (resp.ok && data.token) {
+          setToken(data.token);
+          localStorage.setItem('savedUsername', username);
+          if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.save_username === "function") {
+            try { window.pywebview.api.save_username(username); } catch (e) {}
+          }
+          window.location.href = '/dashboard.html';
+        } else {
+          document.getElementById('loaderOverlay').classList.remove('visible');
+          stopAnimation();
+          errorEl.textContent = data.error || 'Login failed.';
+          errorEl.classList.remove('hidden');
+        }
+      } catch (err) {
+        document.getElementById('loaderOverlay').classList.remove('visible');
+        stopAnimation();
+        errorEl.textContent = 'Could not reach the server.';
+        errorEl.classList.remove('hidden');
+      }
+    });
+
+    // ── Clover animation ─────────────────────────────────────────────────────
     const canvas = document.getElementById('cloverCanvas');
-    const ctx = canvas.getContext('2d');
+    const ctx    = canvas.getContext('2d');
     const W = 220, H = 220, cx = W / 2, cy = H / 2;
     const SCALE = 72, TRAIL_SPAN = 1.82 * Math.PI, SEGMENTS = 320;
     const SPEED = 0.016, LINE_W = 3.2, DOT_R = 5;
     const CR = 68, CG = 214, CB = 104;
-    let angle = 0, animating = false;
+    let angle = 0, animating = false, rafId = null;
 
-    function 
+    function cloverPoint(a) {
+      const r = SCALE * Math.cos(2 * a);
+      return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+    }
+
+    function drawFrame() {
+      ctx.clearRect(0, 0, W, H);
+
+      // Draw trail.
+      for (let i = 0; i < SEGMENTS; i++) {
+        const t  = angle - (i / SEGMENTS) * TRAIL_SPAN;
+        const t2 = t - (1 / SEGMENTS) * TRAIL_SPAN;
+        const p1 = cloverPoint(t);
+        const p2 = cloverPoint(t2);
+        const alpha = (1 - i / SEGMENTS) * 0.85;
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.strokeStyle = `rgba(${CR},${CG},${CB},${alpha})`;
+        ctx.lineWidth   = LINE_W;
+        ctx.lineCap     = 'round';
+        ctx.stroke();
+      }
+
+      // Draw leading dot.
+      const head = cloverPoint(angle);
+      ctx.beginPath();
+      ctx.arc(head.x, head.y, DOT_R, 0, Math.PI * 2);
+      ctx.fillStyle = `rgb(${CR},${CG},${CB})`;
+      ctx.fill();
+
+      angle += SPEED;
+      rafId = requestAnimationFrame(drawFrame);
+    }
+
+    function startAnimation() {
+      if (animating) return;
+      animating = true;
+      drawFrame();
+    }
+
+    function stopAnimation() {
+      animating = false;
+      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    }
+
+    // Autofill username
+    let savedUsernameApplied = false;
+    async function applySavedUsername() {
+      let saved = localStorage.getItem('savedUsername');
+      let gotFromApi = false;
+      if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.get_saved_username === "function") {
+        try {
+          const apiSaved = await window.pywebview.api.get_saved_username();
+          if (apiSaved) {
+            saved = apiSaved;
+            gotFromApi = true;
+          }
+        } catch (e) {
+          console.error("Error reading saved username from desktop API:", e);
+        }
+      }
+      
+      if (saved) {
+        const usernameInput = document.getElementById('username');
+        if (usernameInput) {
+          usernameInput.value = saved;
+          // Fire input and change events to ensure UI/framework alignment
+          usernameInput.dispatchEvent(new Event('input', { bubbles: true }));
+          usernameInput.dispatchEvent(new Event('change', { bubbles: true }));
+          
+          // Focus the password input
+          setTimeout(() => {
+            const passwordInput = document.getElementById('password');
+            if (passwordInput) passwordInput.focus();
+          }, 150);
+          
+          if (gotFromApi) {
+            savedUsernameApplied = true;
+          }
+        }
+      } else {
+        setTimeout(() => {
+          const usernameInput = document.getElementById('username');
+          if (usernameInput) usernameInput.focus();
+        }, 150);
+      }
+    }
+
+    // Run immediately on script mount
+    applySavedUsername();
+
+    // Hook onto the native pywebview ready event
+    window.addEventListener('pywebviewready', () => {
+      applySavedUsername();
+    });
+
+    // Run active polling to capture the asynchronous injection of the JS-Python bridge
+    let bridgePolls = 0;
+    const bridgeInterval = setInterval(() => {
+      bridgePolls++;
+      if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.get_saved_username === "function") {
+        applySavedUsername();
+        if (savedUsernameApplied || bridgePolls >= 30) {
+          clearInterval(bridgeInterval);
+        }
+      } else if (bridgePolls >= 30) {
+        clearInterval(bridgeInterval);
+      }
+    }, 100);
+
+    function closeAppWindow() {
+      if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.close_window === "function") {
+        window.pywebview.api.close_window();
+      }
+    }
+
+    function initDesktopControls() {
+      if (window.pywebview && window.pywebview.api) {
+        document.getElementById("closeWindowBtn")?.classList.remove("hidden");
+      }
+    }
+    window.addEventListener('pywebviewready', initDesktopControls);
+    window.addEventListener('DOMContentLoaded', initDesktopControls);
+    initDesktopControls();
+  </script>
+</body>
+</html>

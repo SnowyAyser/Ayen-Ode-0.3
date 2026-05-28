@@ -44,7 +44,8 @@
     .step-panel {
       position: absolute; inset: 0;
       opacity: 0; pointer-events: none;
-      transform: translateX(52px);
+      /* --enter-from is set by JS per-navigation to control slide direction */
+      transform: translateX(var(--enter-from, 52px));
       transition: opacity 380ms ease-out, transform 380ms cubic-bezier(0.4,0,0.2,1);
     }
     .step-panel.active {
@@ -161,7 +162,11 @@
           Ayen-Ode
         </span>
       </div>
-      <div style="width:88px"></div>
+      <div class="flex justify-end" style="width:88px">
+        <button id="closeWindowBtn" onclick="closeAppWindow()" class="hidden bg-slate-900 hover:bg-red-950/60 border border-slate-800 hover:border-red-900/50 px-3 py-1 rounded-md text-xs text-slate-400 hover:text-red-400 transition-all duration-150 select-none">
+          Quit
+        </button>
+      </div>
     </header>
 
     <!-- Wizard body -->
@@ -399,30 +404,34 @@
       const to   = document.getElementById(`step-${next}`);
       const dir  = next > currentStep ? 1 : -1;
 
-      // Slide out current
+      // Slide out current panel — inline transform overrides exit-left's fixed
+      // value so we get the correct exit direction for both forward and back.
       from.classList.remove('active');
       from.classList.add('exit-left');
       from.style.transform = `translateX(${dir * -52}px)`;
       from.style.opacity   = '0';
 
-      // Prepare incoming
-      to.style.transform   = `translateX(${dir * 52}px)`;
-      to.style.opacity     = '0';
-      to.style.transition  = 'none';
+      // Set the incoming panel's starting position via CSS custom property.
+      // Using a CSS var instead of a direct inline style means the .active
+      // class (opacity:1, transform:0) wins on specificity and the transition
+      // fires correctly — direct inline styles would override the class and
+      // keep the panel invisible.
+      to.style.setProperty('--enter-from', `${dir * 52}px`);
 
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          to.style.transition = '';
-          to.classList.add('active');
+      // Force a style flush so the browser records the "from" values before
+      // the transition starts.
+      to.getBoundingClientRect();
 
-          // Clean up exit panel after transition
-          setTimeout(() => {
-            from.classList.remove('exit-left');
-            from.style.transform = '';
-            from.style.opacity   = '';
-          }, 400);
-        });
-      });
+      // Activate — CSS transitions opacity 0→1 and transform var→0.
+      to.classList.add('active');
+
+      // Clean up after transitions finish.
+      setTimeout(() => {
+        from.classList.remove('exit-left');
+        from.style.transform = '';
+        from.style.opacity   = '';
+        to.style.removeProperty('--enter-from');
+      }, 400);
 
       currentStep = next;
       updateDots();
@@ -589,6 +598,21 @@
 
     // Initial focus
     setTimeout(() => document.getElementById('worldName').focus(), 200);
+
+    function closeAppWindow() {
+      if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.close_window === "function") {
+        window.pywebview.api.close_window();
+      }
+    }
+
+    function initDesktopControls() {
+      if (window.pywebview && window.pywebview.api) {
+        document.getElementById("closeWindowBtn")?.classList.remove("hidden");
+      }
+    }
+    window.addEventListener('pywebviewready', initDesktopControls);
+    window.addEventListener('DOMContentLoaded', initDesktopControls);
+    initDesktopControls();
   </script>
 </body>
 </html>

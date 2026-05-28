@@ -58,7 +58,8 @@ if (-not $pythonExe) {
 $buildVenv = Join-Path $script:RepoRoot ".venv-build"
 Write-Stage "Preparing build venv at .venv-build"
 if (-not (Test-Path $buildVenv)) {
-    & $pythonExe.Split(" ") -m venv $buildVenv
+    $parts = $pythonExe -split " "
+    & $parts[0] $parts[1..($parts.Length - 1)] -m venv $buildVenv
 }
 $venvPython = Join-Path $buildVenv "Scripts\python.exe"
 if (-not (Test-Path $venvPython)) {
@@ -85,7 +86,7 @@ if ($Clean) {
 # --- 4. Run PyInstaller ----------------------------------------------------
 
 Write-Stage "Running PyInstaller (this takes a minute)"
-& $venvPython -m PyInstaller --noconfirm --clean ayen-ode.spec
+& $venvPython -m PyInstaller --noconfirm --clean scripts/ayen-ode.spec
 if ($LASTEXITCODE -ne 0) {
     Write-Error "PyInstaller failed"
 }
@@ -111,8 +112,12 @@ if ($Installer) {
 
     # Resolve version from pyproject.toml if not passed.
     if (-not $Version) {
-        $py = $venvPython
-        $Version = & $py -c "import re,pathlib; m=re.search(r'^version\s*=\s*["']([^"']+)', pathlib.Path('pyproject.toml').read_text(), re.M); print(m.group(1) if m else '0.0.0')"
+        $content = Get-Content -Raw pyproject.toml
+        if ($content -match '(?m)^version\s*=\s*["'']([^"'']*)') {
+            $Version = $Matches[1]
+        } else {
+            $Version = "0.0.0"
+        }
     }
     Write-Host "    Version: $Version"
 
