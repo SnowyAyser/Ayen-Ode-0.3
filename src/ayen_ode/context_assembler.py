@@ -58,12 +58,39 @@ class ContextAssembler(PlayerQueryMixin):
             relationship_histories = self._query_relationship_histories(conn, wid, scene, player_entity_id)
             world_bleed = self._query_world_bleed(conn, wid, scene_ids)
 
+            debt_rows = conn.execute(
+                """
+                SELECT wd.*, e1.name AS debtor_name, e2.name AS creditor_name
+                FROM world_debts wd
+                JOIN entities e1 ON e1.entity_id = wd.debtor_id
+                JOIN entities e2 ON e2.entity_id = wd.creditor_id
+                WHERE wd.world_id = ? AND wd.status = 'active'
+                ORDER BY wd.created_at DESC
+                """,
+                (wid,),
+            ).fetchall()
+            active_debts = [
+                {
+                    "debt_id": r["debt_id"],
+                    "debtor_id": r["debtor_id"],
+                    "debtor_name": r["debtor_name"],
+                    "creditor_id": r["creditor_id"],
+                    "creditor_name": r["creditor_name"],
+                    "resource_type": r["resource_type"],
+                    "quantity": r["quantity"],
+                    "detail": r["detail"],
+                    "evidence": r["evidence"],
+                }
+                for r in debt_rows
+            ]
+
         packet = {
             "game_time": {
                 "seconds": time_row["game_time_seconds"] if time_row else 0,
                 "label": time_row["game_time_label"] if time_row else "",
             },
             "scene": scene,
+            "active_debts": active_debts,
             "actor_awareness": actor_awareness,
             "recent_history": recent_history,
             "open_threads": open_threads,

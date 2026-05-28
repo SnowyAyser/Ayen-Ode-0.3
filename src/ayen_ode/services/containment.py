@@ -133,8 +133,15 @@ class ContainmentMixin:
             world_row = self._resolve_world(conn, world) if world else self._require_active_world(conn)
             wid = world_row["world_id"]
             entity = self._resolve_entity(conn, wid, entity_id)
+            moving_type = entity["entity_type"]
             if new_container_id is not None:
-                self._resolve_entity(conn, wid, new_container_id)
+                dest_row = self._resolve_entity(conn, wid, new_container_id)
+                dest_type = dest_row["entity_type"]
+                if dest_type in ("character", "object") and moving_type != "object":
+                    raise ValueError(
+                        f"Containment violation: {dest_type.capitalize()} '{dest_row['name']}' can only contain objects, "
+                        f"not {moving_type} '{entity['name']}'."
+                    )
                 if self._check_circular(conn, entity_id, new_container_id):
                     raise ValueError(
                         f"Circular containment: '{new_container_id}' is already inside '{entity_id}'."

@@ -279,6 +279,10 @@ For already-investigated entities, use tools to maintain continuity:
 - Call add_timeline_note on known entities to record significant events
 - Call apply_stat_change when narrative events meaningfully shift their stats
 
+ACTIVE DEBTS & OBLIGATIONS:
+- Adhere strictly to any active debts listed in the world context.
+- If a character owes another entity a resource (e.g., money, cows, favors, or a life), enforce this subtext in dialogue and actions. Debtors might act defensive, desperate, servile, or attempt to bargain or settle their obligations.
+
 Do not break character or reference mechanics in the narrative text itself.
 
 {context}"""

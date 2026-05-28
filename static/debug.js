@@ -105,7 +105,7 @@ function sectionHeader(color, title) {
 }
 
 // Tab switching
-const ALL_TABS = ['entities','containment','knowledge','consequence','live'];
+const ALL_TABS = ['entities','containment','knowledge','consequence','live','intake'];
 
 function switchTab(tab) {
   activeTab = tab;
@@ -134,6 +134,7 @@ function switchTab(tab) {
   if (tab === 'knowledge')   renderKnowledgeTable();
   if (tab === 'consequence') renderConsequenceList();
   if (tab === 'entities' && !showingDetail) renderEntityGrid();
+  if (tab === 'intake')      pollIntakePanel();
 }
 
 // Metrics
@@ -183,6 +184,7 @@ async function poll() {
   if (activeTab === 'knowledge')   renderKnowledgeTable();
   if (activeTab === 'consequence') renderConsequenceList();
   if (activeTab === 'entities' && !showingDetail) renderEntityGrid();
+  if (activeTab === 'intake')      pollIntakePanel();
 
   setTimeout(() => dot.classList.replace('bg-emerald-500', 'bg-slate-700'), 250);
 }

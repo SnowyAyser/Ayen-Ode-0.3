@@ -216,6 +216,31 @@ CREATE TABLE IF NOT EXISTS world_quests (
     updated_at        TEXT NOT NULL,
     completed_at      TEXT
 );
+
+CREATE TABLE IF NOT EXISTS world_debts (
+    debt_id TEXT PRIMARY KEY,
+    world_id TEXT NOT NULL REFERENCES worlds(world_id) ON DELETE CASCADE,
+    debtor_id TEXT NOT NULL REFERENCES entities(entity_id) ON DELETE CASCADE,
+    creditor_id TEXT NOT NULL REFERENCES entities(entity_id) ON DELETE CASCADE,
+    resource_type TEXT NOT NULL,
+    quantity TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active',
+    evidence TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS intake_logs (
+    log_id TEXT PRIMARY KEY,
+    world_id TEXT NOT NULL REFERENCES worlds(world_id) ON DELETE CASCADE,
+    narrative_text TEXT NOT NULL,
+    thought_process TEXT NOT NULL,
+    tools_attempted_json TEXT NOT NULL,
+    tools_executed_json TEXT NOT NULL,
+    game_time_label TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 """
 
 
