@@ -98,17 +98,22 @@ def make_worlds_routes(service: Any, settings: Any, sessions: Any) -> list:
 
     async def reset_world_handler(request: Request) -> JSONResponse:
         try:
-            world_id = request.path_params.get("world_id")
+            world_id = request.path_params["world_id"]
             result = service.reset_world(world_id)
             
-            # Immediately background pre-generate any links in the original opening scene
-            original_text = result.get("world", {}).get("original_opening_scene", "")
+            # Clear any stale in-memory dedup keys for this world before spawning new pre-gen
+            from ..relinker import clear_pending_pregenerations, auto_pre_generate_new_investigations
+            clear_pending_pregenerations(world_id)
+            
+            # Fire-and-forget background pre-generation (non-blocking)
+            original_text = result.get("original_opening_scene", "")
             if original_text and settings.anthropic_client:
-                try:
-                    from ..relinker import auto_pre_generate_new_investigations
-                    auto_pre_generate_new_investigations(settings.anthropic_client, service, world_id, original_text)
-                except Exception:
-                    pass
+                import threading
+                threading.Thread(
+                    target=auto_pre_generate_new_investigations,
+                    args=(settings.anthropic_client, service, world_id, original_text),
+                    daemon=True,
+                ).start()
                     
             return JSONResponse({"success": True, **result})
         except Exception as e:

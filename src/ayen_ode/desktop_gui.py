@@ -451,10 +451,10 @@ class DashboardFrame(ctk.CTkFrame):
             original_text = result.get("world", {}).get("original_opening_scene", "")
             if original_text and self.app.settings.anthropic_client:
                 try:
-                    from .relinker import auto_pre_generate_new_investigations
+                    from .relinker import pre_generate_scene_investigations_sync
                     import threading
                     threading.Thread(
-                        target=auto_pre_generate_new_investigations,
+                        target=pre_generate_scene_investigations_sync,
                         args=(self.app.settings.anthropic_client, self.app.service, wid, original_text),
                         daemon=True
                     ).start()

@@ -10,7 +10,13 @@ import multiprocessing
 
 def main() -> int:
     multiprocessing.freeze_support()
-    
+
+    # If a newer source version exists, rebuild and relaunch before starting.
+    # No-op when running from source; only the packaged exe self-updates.
+    from ayen_ode.updater import check_and_update
+    if check_and_update():
+        return 0
+
     from ayen_ode.desktop import check_single_instance
     if not check_single_instance():
         msg = "You can't have more than one instance of the game open at a time."

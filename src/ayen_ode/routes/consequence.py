@@ -272,31 +272,44 @@ def make_consequence_routes(service: Any, settings: Any, sessions: Any) -> list:
 
             context = data.get("context", "")
 
-            # 3. Call Claude immediately (pre-fetch) in a separate worker thread to avoid blocking the event loop
-            import functools
-            from anyio.to_thread import run_sync
-            func = functools.partial(
-                investigate_entity,
-                settings.anthropic_client,
-                service,
-                world_id,
-                item_name,
-                entity_type,
-                [],
-                save_to_db=False,
-                context=context
-            )
-            result = await run_sync(func)
+            # Check if this item is already being pre-generated in a background thread
+            from ..relinker import _pending_pregenerations, _pending_pregenerations_lock
+            key = (world_id, item_name.strip().lower())
+            with _pending_pregenerations_lock:
+                if key in _pending_pregenerations:
+                    return JSONResponse({"success": True, "cached": False, "status": "pending"})
+                _pending_pregenerations.add(key)
 
-            # 4. Save results to pregenerated_investigations cache
-            now = utc_now()
-            with service.connect() as conn:
-                conn.execute(
-                    "INSERT OR REPLACE INTO pregenerated_investigations"
-                    " (world_id, entity_name, entity_type, result_json, created_at)"
-                    " VALUES (?, ?, ?, ?, ?)",
-                    (world_id, item_name.strip(), entity_type.strip(), json.dumps(result), now),
-                )
+            # 3. Offload Claude pre-generation and DB save to a background thread to prevent blocking
+            def bg_pregenerate():
+                try:
+                    result = investigate_entity(
+                        settings.anthropic_client,
+                        service,
+                        world_id,
+                        item_name,
+                        entity_type,
+                        [],
+                        save_to_db=False,
+                        context=context
+                    )
+                    now = utc_now()
+                    with service.connect() as conn:
+                        conn.execute(
+                            "INSERT OR REPLACE INTO pregenerated_investigations"
+                            " (world_id, entity_name, entity_type, result_json, created_at)"
+                            " VALUES (?, ?, ?, ?, ?)",
+                            (world_id, item_name.strip(), entity_type.strip(), json.dumps(result), now),
+                        )
+                except Exception as ex:
+                    print(f"Background pre-generation failed for {item_name}: {ex}")
+                finally:
+                    with _pending_pregenerations_lock:
+                        _pending_pregenerations.discard(key)
+
+            import threading
+            thread = threading.Thread(target=bg_pregenerate, daemon=True)
+            thread.start()
 
             return JSONResponse({"success": True, "cached": False})
         except Exception as e:

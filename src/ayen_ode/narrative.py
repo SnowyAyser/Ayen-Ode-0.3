@@ -320,8 +320,8 @@ Do not break character or reference mechanics in the narrative text itself.
         try:
             from .relinker import relink_text_with_llm, auto_pre_generate_new_investigations
             with service.connect() as conn:
-                entities = conn.execute("SELECT DISTINCT name FROM entities").fetchall()
-                already_investigated = [row["name"] for row in entities]
+                entities = conn.execute("SELECT name, entity_type FROM entities").fetchall()
+                already_investigated = {row["name"]: row["entity_type"] for row in entities}
             narrative_response = relink_text_with_llm(client, narrative_response, already_investigated)
             auto_pre_generate_new_investigations(client, service, world_id, narrative_response)
         except Exception:
@@ -408,8 +408,8 @@ Write naturally, in character. The discovery should feel organic to the world.""
     try:
         from .relinker import relink_text_with_llm
         with service.connect() as conn:
-            entities = conn.execute("SELECT DISTINCT name FROM entities").fetchall()
-            already_investigated = [row["name"] for row in entities]
+            entities = conn.execute("SELECT name, entity_type FROM entities").fetchall()
+            already_investigated = {row["name"]: row["entity_type"] for row in entities}
             
         if "summary" in entity_details and entity_details["summary"]:
             entity_details["summary"] = relink_text_with_llm(client, entity_details["summary"], already_investigated)
@@ -457,8 +457,8 @@ Write naturally, in character. The discovery should feel organic to the world.""
     try:
         from .relinker import relink_text_with_llm
         with service.connect() as conn:
-            entities = conn.execute("SELECT DISTINCT name FROM entities").fetchall()
-            already_investigated = [row["name"] for row in entities]
+            entities = conn.execute("SELECT name, entity_type FROM entities").fetchall()
+            already_investigated = {row["name"]: row["entity_type"] for row in entities}
         if narrative_text:
             narrative_text = relink_text_with_llm(client, narrative_text, already_investigated)
     except Exception:
