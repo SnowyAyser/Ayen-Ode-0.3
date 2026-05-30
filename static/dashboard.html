@@ -233,7 +233,7 @@
         <p class="text-slate-300 text-sm mb-2">Reset <span id="resetWorldName" class="font-semibold text-white"></span>?</p>
         <p class="text-slate-500 text-xs">All story progress, entities, and investigations will be wiped. The opening scene and world details are kept.</p>
       </div>
-      <div class="px-6 py-3 border-t border-slate-800 flex justify-end gap-2">
+      <div id="resetModalButtons" class="px-6 py-3 border-t border-slate-800 flex justify-end gap-2">
         <button onclick="closeResetModal()" class="text-slate-500 hover:text-slate-200 text-sm px-4 py-2 rounded-md hover:bg-slate-800 transition-colors">Cancel</button>
         <button onclick="confirmReset()" class="bg-amber-700 hover:bg-amber-600 text-white text-sm px-4 py-2 rounded-md transition-colors font-medium">Reset</button>
       </div>
@@ -765,18 +765,46 @@
     function closeResetModal() {
       pendingResetId = null;
       document.getElementById("resetModal").classList.add("hidden");
+      const btnContainer = document.getElementById("resetModalButtons");
+      if (btnContainer) {
+        btnContainer.innerHTML = `
+          <button onclick="closeResetModal()" class="text-slate-500 hover:text-slate-200 text-sm px-4 py-2 rounded-md hover:bg-slate-800 transition-colors">Cancel</button>
+          <button onclick="confirmReset()" class="bg-amber-700 hover:bg-amber-600 text-white text-sm px-4 py-2 rounded-md transition-colors font-medium">Reset</button>
+        `;
+      }
     }
 
     async function confirmReset() {
       if (!pendingResetId) return;
       const worldId = pendingResetId;
-      closeResetModal();
+      const btnContainer = document.getElementById("resetModalButtons");
+      const originalHtml = btnContainer.innerHTML;
+      
+      // Display cinematic loading message and disable modal close actions
+      btnContainer.innerHTML = `
+        <div class="text-amber-500 text-xs font-semibold animate-pulse flex items-center gap-2 pr-2">
+          <span>Resetting &amp; pre-generating opening scene…</span>
+        </div>
+      `;
+      
       try {
         const result = await apiCall(`/api/worlds/${worldId}/reset`, "POST", {});
-        if (result && result.success) loadData();
-        else alert("Reset failed: " + (result?.error || "Unknown error"));
+        if (result && result.success) {
+          // Clear stale localStorage history so the narrative page shows the fresh opening scene
+          localStorage.removeItem(`ayen_ode_history_${worldId}`);
+          localStorage.removeItem(`ayen_ode_draft_${worldId}`);
+          loadData();
+          // Restore pending reset state and close modal
+          pendingResetId = null;
+          document.getElementById("resetModal").classList.add("hidden");
+          btnContainer.innerHTML = originalHtml;
+        } else {
+          alert("Reset failed: " + (result?.error || "Unknown error"));
+          btnContainer.innerHTML = originalHtml;
+        }
       } catch (e) {
         alert("Reset failed: " + e.message);
+        btnContainer.innerHTML = originalHtml;
       }
     }
 

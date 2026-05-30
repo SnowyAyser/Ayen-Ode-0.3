@@ -256,7 +256,11 @@ class WorldsMixin:
                 """,
                 (make_id("currency"), world_id, now),
             )
-            return {"reset_world_id": world_id, "world": self._world_dict(self._get_world_row(conn, world_id))}
+            return {
+                "reset_world_id": world_id,
+                "world": self._world_dict(self._get_world_row(conn, world_id)),
+                "original_opening_scene": original_text,
+            }
 
     def set_original_opening_scene(self, world_id: str, scene_text: str) -> None:
         """Store the raw original opening scene (including LLM investigation tags) permanently."""

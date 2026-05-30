@@ -47,40 +47,51 @@ def text_needs_relinking(text: str, already_investigated: list[str]) -> bool:
     return False
 
 
-def relink_text_with_llm(client: Any, text: str, already_investigated: list[str]) -> str:
-    if not text.strip():
+def relink_text_programmatically(text: str, already_investigated: dict[str, str] | list[str]) -> str:
+    if not text.strip() or not already_investigated:
         return text
 
-    investigated_list_str = "\n".join(f"- {name}" for name in already_investigated)
-    
-    prompt = f"""You are an assistant for a narrative RPG engine.
-Your task is to analyze the provided text and wrap any keywords (characters, locations, objects, factions, events) that represent discoverable lore or entities in `<investigate item='NAME' cost='1'>KEYWORD</investigate>` tags so the player can click and investigate them.
+    # Convert list/dict already_investigated to a uniform lowercase name -> type dict
+    if isinstance(already_investigated, list):
+        existing_entities = {name.strip().lower(): "object" for name in already_investigated if name.strip()}
+    else:
+        existing_entities = {name.strip().lower(): etype for name, etype in already_investigated.items() if name.strip()}
 
-Already investigated entities (DO NOT wrap these in investigate tags, as they are already known):
-{investigated_list_str}
+    # Sort names by length descending to match longer multi-word phrases first
+    sorted_names = sorted(existing_entities.keys(), key=len, reverse=True)
 
-Rules:
-1. ONLY wrap items that are NOT in the already investigated list. If a keyword is in the already investigated list, leave it as plain text (do not wrap it in tags).
-2. If an item is already wrapped in `<investigate>` tags, preserve it exactly as-is.
-3. Be highly selective: only wrap named entities (such as specific characters, cities, factions) or new, made-up words/terms/fantasy jargon, complex world-specific vocabulary/lore, or novel ideas/concepts introduced by the game that are not simple enough to understand on their own and need explanation. Do NOT wrap common nouns (like 'sword', 'tower', 'star', 'plinth', 'event', 'skeleton', 'lights'), abstract concepts, or generic/common words.
-4. Ensure target entity names in the item attribute are clean and exact (e.g. item='old merchant', item='desert ruins').
-5. If a sub-entity name or a person/place (e.g., 'Kal-Dorum' or 'Kal Dorum') is mentioned within a longer text or as part of another entity name (e.g., 'the Verge of Kal-Dorum'), but that specific sub-entity does NOT have its own standalone entry in the already investigated list, you MUST wrap it in an `<investigate>` tag (e.g., `<investigate item='Kal-Dorum' cost='1'>Kal-Dorum</investigate>`) so it can be investigated independently!
-6. Return ONLY the final relinked text. Do not include any explanations, formatting wrappers, markdown fences, or conversational filler. Keep all other text exactly unchanged.
+    # Split text into segments inside and outside investigate tags
+    tag_pattern = re.compile(r"(<investigate\s+[^>]*?>.*?</investigate>)", re.DOTALL)
+    parts = tag_pattern.split(text)
 
-Input text:
-{text}
-"""
-    try:
-        response = client.messages.create(
-            model=HAIKU_MODEL,
-            max_tokens=4000,
-            temperature=0.1,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return response.content[0].text.strip()
-    except Exception as e:
-        logger.warning(f"Error calling Anthropic API during relinking: {e}")
-        return text
+    type_attr_map = {
+        "character": "npc",
+        "location": "location",
+        "faction": "faction",
+        "object": "item",
+        "event": "event"
+    }
+
+    for i in range(len(parts)):
+        # Only modify segments outside existing investigate tags
+        if not parts[i].startswith("<investigate"):
+            segment = parts[i]
+            for name in sorted_names:
+                etype = existing_entities[name]
+                attr = type_attr_map.get(etype, "item")
+                
+                # Match whole words case-insensitively
+                pattern = re.compile(r"\b(" + re.escape(name) + r")\b", re.IGNORECASE)
+                replacement = f"<investigate {attr}='{name}' cost='1'>\\1</investigate>"
+                segment = pattern.sub(replacement, segment)
+            parts[i] = segment
+
+    return "".join(parts)
+
+
+def relink_text_with_llm(client: Any, text: str, already_investigated: dict[str, str] | list[str]) -> str:
+    """Fallback wrapper that maps to programmatic relinker to bypass AI calls entirely."""
+    return relink_text_programmatically(text, already_investigated)
 
 
 _INV_RE = re.compile(r"<investigate\s+([^>]*?)>(.*?)</investigate>", re.DOTALL)
@@ -136,6 +147,18 @@ def get_name_variants(name: str) -> list[str]:
     return list(set(variants))
 
 
+import threading
+
+_pending_pregenerations = set()
+_pending_pregenerations_lock = threading.Lock()
+
+
+def clear_pending_pregenerations(world_id: str) -> None:
+    """Remove all pending pre-generation keys for a given world (e.g. after reset)."""
+    with _pending_pregenerations_lock:
+        to_remove = {k for k in _pending_pregenerations if k[0] == world_id}
+        _pending_pregenerations -= to_remove
+
 def auto_pre_generate_new_investigations(client: Any, service: Any, world_id: str, text: str) -> None:
     """Scan text for investigate tags, and background-pregenerate any new entities."""
     if not client:
@@ -145,10 +168,14 @@ def auto_pre_generate_new_investigations(client: Any, service: Any, world_id: st
     if not items:
         return
 
-    import threading
     from .narrative import investigate_entity
 
     def pregen_worker(name: str, etype: str):
+        key = (world_id, name.strip().lower())
+        with _pending_pregenerations_lock:
+            if key in _pending_pregenerations:
+                return
+            _pending_pregenerations.add(key)
         try:
             variants = get_name_variants(name)
             placeholders = ",".join("?" for _ in variants)
@@ -185,6 +212,9 @@ def auto_pre_generate_new_investigations(client: Any, service: Any, world_id: st
             )
         except Exception as e:
             logger.warning(f"Error auto-pregenerating {name}: {e}")
+        finally:
+            with _pending_pregenerations_lock:
+                _pending_pregenerations.discard(key)
 
     for name, etype in items:
         threading.Thread(target=pregen_worker, args=(name, etype), daemon=True).start()
@@ -202,8 +232,8 @@ def run_database_relinking(service: Any, settings: Any) -> None:
         
         # 1. Fetch investigated entities and all logs/entries in a brief, closed connection
         with service.connect() as conn:
-            entities = conn.execute("SELECT DISTINCT name FROM entities").fetchall()
-            already_investigated = [row["name"] for row in entities]
+            entities = conn.execute("SELECT name, entity_type FROM entities").fetchall()
+            already_investigated = {row["name"]: row["entity_type"] for row in entities}
             logs = conn.execute("SELECT log_id, world_id, narrative_text FROM intake_logs").fetchall()
             handoffs = conn.execute("SELECT handoff_id, world_id, handoff_text FROM world_handoffs").fetchall()
             entity_rows = conn.execute(
@@ -315,3 +345,65 @@ def run_database_relinking(service: Any, settings: Any) -> None:
         logger.info("Database keyword relinking pass completed successfully.")
     except Exception as e:
         logger.warning(f"Error during background relinking pass: {e}")
+
+
+def pre_generate_scene_investigations_sync(client: Any, service: Any, world_id: str, text: str) -> None:
+    """Extract tags and pre-generate all of them concurrently, waiting for completion."""
+    if not client:
+        return
+
+    items = extract_investigate_tags(text)
+    if not items:
+        return
+
+    import concurrent.futures
+    from .narrative import investigate_entity
+    from .services.base import utc_now
+
+    def worker(name: str, etype: str):
+        try:
+            variants = get_name_variants(name)
+            placeholders = ",".join("?" for _ in variants)
+
+            # Check if already exists or pregenerated
+            with service.connect() as conn:
+                already_exists = conn.execute(
+                    f"SELECT 1 FROM entities WHERE world_id = ? AND LOWER(name) IN ({placeholders})",
+                    [world_id] + variants
+                ).fetchone()
+                if already_exists:
+                    return
+
+                already_pregenerated = conn.execute(
+                    f"SELECT 1 FROM pregenerated_investigations WHERE world_id = ? AND LOWER(entity_name) IN ({placeholders})",
+                    [world_id] + variants
+                ).fetchone()
+                if already_pregenerated:
+                    return
+
+            logger.info(f"Synchronously pre-generating: {name} ({etype})")
+            result = investigate_entity(
+                client,
+                service,
+                world_id,
+                name,
+                etype,
+                [],
+                save_to_db=False,
+                context="Pre-generated during world loading."
+            )
+            now = utc_now()
+            with service.connect() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO pregenerated_investigations"
+                    " (world_id, entity_name, entity_type, result_json, created_at)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (world_id, name.strip(), etype.strip(), json.dumps(result), now),
+                )
+        except Exception as e:
+            logger.warning(f"Failed pre-generating {name}: {e}")
+
+    # Use a ThreadPoolExecutor to run all of them concurrently
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(worker, name, etype) for name, etype in items]
+        concurrent.futures.wait(futures)
