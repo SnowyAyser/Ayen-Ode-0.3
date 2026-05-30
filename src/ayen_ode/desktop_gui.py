@@ -447,7 +447,19 @@ class DashboardFrame(ctk.CTkFrame):
     def _do_reset(self, dlg, wid: str) -> None:
         dlg.destroy()
         try:
-            self.app.service.reset_world(wid)
+            result = self.app.service.reset_world(wid)
+            original_text = result.get("world", {}).get("original_opening_scene", "")
+            if original_text and self.app.settings.anthropic_client:
+                try:
+                    from .relinker import auto_pre_generate_new_investigations
+                    import threading
+                    threading.Thread(
+                        target=auto_pre_generate_new_investigations,
+                        args=(self.app.settings.anthropic_client, self.app.service, wid, original_text),
+                        daemon=True
+                    ).start()
+                except Exception:
+                    pass
             self._load()
         except Exception as e:
             self._toast(str(e))
