@@ -571,7 +571,7 @@
 
         statusText.textContent = 'Preparing your narrative…';
         setTimeout(() => {
-          window.location.href = `/narrative.html?world_id=${data.world_id}`;
+          window.location.href = `/narrative.html?world_id=${data.world_id}&fresh=1`;
         }, 700);
       } catch (err) {
         overlay.classList.remove('visible');

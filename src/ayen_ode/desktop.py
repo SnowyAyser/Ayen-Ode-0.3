@@ -29,6 +29,43 @@ import time
 import urllib.request
 
 
+_mutex_handle = None
+_lock_file = None
+
+
+def check_single_instance() -> bool:
+    """Ensure only one instance of the game runs at a time. Returns True if
+    this is the only instance; False if another is already running."""
+    global _mutex_handle, _lock_file
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            # Global\\ prefix makes the mutex visible across all terminal server sessions
+            MUTEX_NAME = "Global\\AyenOdeSingleInstanceMutex"
+            kernel32 = ctypes.windll.kernel32
+            # Keep a reference to the mutex handle so it isn't garbage collected!
+            _mutex_handle = kernel32.CreateMutexW(None, True, MUTEX_NAME)
+            last_error = kernel32.GetLastError()
+            if last_error == 183: # ERROR_ALREADY_EXISTS
+                return False
+            return True
+        except Exception:
+            pass
+    else:
+        # Cross-platform fallback: lock file lock in the user data directory
+        try:
+            from . import paths
+            lock_path = paths.user_data_dir() / "app.lock"
+            # Keep lock file handle open
+            _lock_file = open(lock_path, "w")
+            import fcntl
+            fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except Exception:
+            return False
+    return True
+
+
 def _pick_free_port() -> int:
     """Ask the OS for a free port on loopback, then release it. There's a small
     race between this call and uvicorn binding it, but in practice it's safe
@@ -93,12 +130,18 @@ def run_desktop() -> int:
     os.environ["WEBVIEW2_USER_DATA_FOLDER"] = str(webview_storage)
 
     # Honour AYEN_ODE_PORT if already set (useful for tests / scripted launches);
-    # otherwise grab a free ephemeral port on loopback.
+    # otherwise try to bind to a static standard port (to preserve same-origin localStorage), falling back to ephemeral.
     preset = os.environ.get("AYEN_ODE_PORT", "").strip()
     if preset.isdigit():
         port = int(preset)
     else:
-        port = _pick_free_port()
+        import socket
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("127.0.0.1", 54224))
+                port = 54224
+        except Exception:
+            port = _pick_free_port()
         os.environ["AYEN_ODE_PORT"] = str(port)
     os.environ["AYEN_ODE_HOST"] = "127.0.0.1"
 
@@ -122,7 +165,8 @@ def run_desktop() -> int:
         pass
 
     # Import server lazily so the env tweaks above take effect first.
-    from .server import app, investigation_worker
+    from .server import app, investigation_worker, service, settings
+    from .relinker import run_database_relinking
 
     threading.Thread(target=investigation_worker, daemon=True).start()
 
@@ -155,10 +199,21 @@ def run_desktop() -> int:
     # is loaded at server import time and doesn't expose this field.
     start_fullscreen = _read_fullscreen_preference()
 
+    # Determine startup URL: auto-login redirect if preference is enabled
+    auto_login_pref = False
+    try:
+        p_auto = paths.user_data_dir() / "auto_login.txt"
+        if p_auto.exists():
+            auto_login_pref = p_auto.read_text(encoding="utf-8").strip() == "true"
+    except Exception:
+        pass
+
+    start_url = base_url + "/desktop-bootstrap" if auto_login_pref else base_url + "/"
+
     api = DesktopApi()
     window = webview.create_window(
         title="Ayen-Ode",
-        url=base_url + "/",
+        url=start_url,
         width=1280,
         height=820,
         min_size=(960, 640),
@@ -185,7 +240,8 @@ def run_desktop() -> int:
         webview.start(
             gui=gui_backend,
             private_mode=False,
-            storage_path=str(webview_storage)
+            storage_path=str(webview_storage),
+            debug=False
         )
     finally:
         # Once the user closes the window, ask uvicorn to shut down so the
@@ -297,4 +353,30 @@ class DesktopApi:
             return True
         except Exception as e:
             print(f"[DesktopApi] save_username error: {e}")
+        return False
+
+    def get_auto_login(self) -> bool:
+        """Get the auto-login preference from user_data_dir to bypass Same-Origin port isolation."""
+        try:
+            from . import paths
+            p = paths.user_data_dir() / "auto_login.txt"
+            if p.exists():
+                val = p.read_text(encoding="utf-8").strip()
+                print(f"[DesktopApi] get_auto_login read: {val}")
+                return val == "true"
+        except Exception as e:
+            print(f"[DesktopApi] get_auto_login error: {e}")
+        return False
+
+    def save_auto_login(self, value: bool) -> bool:
+        """Save the auto-login preference to user_data_dir to bypass Same-Origin port isolation."""
+        try:
+            from . import paths
+            p = paths.user_data_dir() / "auto_login.txt"
+            val = "true" if value else "false"
+            p.write_text(val, encoding="utf-8")
+            print(f"[DesktopApi] save_auto_login wrote: {val}")
+            return True
+        except Exception as e:
+            print(f"[DesktopApi] save_auto_login error: {e}")
         return False

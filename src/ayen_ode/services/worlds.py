@@ -194,19 +194,49 @@ class WorldsMixin:
         with self.connect() as conn:
             target = self._resolve_world(conn, world)
             world_id = target["world_id"]
-            # Grab the original opening scene before wiping
-            original = conn.execute(
-                "SELECT handoff_text FROM world_handoffs WHERE world_id = ? ORDER BY created_at ASC LIMIT 1",
-                (world_id,),
-            ).fetchone()
-            original_text = original["handoff_text"] if original else ""
-            # Wipe all content (entity cascade handles entity_links, entity_stats, stat_ledger)
+            
+            # Retrieve the original opening scene from original_opening_scene column if populated
+            original_text = ""
+            try:
+                original_text = target["original_opening_scene"]
+            except (IndexError, KeyError):
+                pass
+                
+            # Fallback and backfill from oldest handoff if column was empty
+            if not original_text:
+                original = conn.execute(
+                    "SELECT handoff_text FROM world_handoffs WHERE world_id = ? ORDER BY created_at ASC LIMIT 1",
+                    (world_id,),
+                ).fetchone()
+                original_text = original["handoff_text"] if original else ""
+                if original_text:
+                    conn.execute(
+                        "UPDATE worlds SET original_opening_scene = ? WHERE world_id = ?",
+                        (original_text, world_id),
+                    )
+
+            # Wipe all playthrough progress (entity cascade handles entity_links, entity_stats, stat_ledger)
             conn.execute("DELETE FROM entities WHERE world_id = ?", (world_id,))
             conn.execute("DELETE FROM world_handoffs WHERE world_id = ?", (world_id,))
             conn.execute("DELETE FROM investigation_state WHERE world_id = ?", (world_id,))
             conn.execute("DELETE FROM investigation_jobs WHERE world_id = ?", (world_id,))
             conn.execute("DELETE FROM world_currencies WHERE world_id = ?", (world_id,))
             conn.execute("DELETE FROM sync_log WHERE world_id = ?", (world_id,))
+            conn.execute("DELETE FROM intake_logs WHERE world_id = ?", (world_id,))
+            conn.execute("DELETE FROM containment_events WHERE world_id = ?", (world_id,))
+            conn.execute("DELETE FROM entity_knowledge WHERE world_id = ?", (world_id,))
+            conn.execute("DELETE FROM knowledge_events WHERE world_id = ?", (world_id,))
+            conn.execute("DELETE FROM consequence_records WHERE world_id = ?", (world_id,))
+            conn.execute("DELETE FROM world_quests WHERE world_id = ?", (world_id,))
+            conn.execute("DELETE FROM world_debts WHERE world_id = ?", (world_id,))
+            conn.execute("DELETE FROM pregenerated_investigations WHERE world_id = ?", (world_id,))
+
+            # Reset game time
+            conn.execute(
+                "UPDATE worlds SET game_time_seconds = 0, game_time_label = '', narrative_turn_count = 0 WHERE world_id = ?",
+                (world_id,),
+            )
+
             # Restore the original opening scene as the only handoff
             if original_text:
                 conn.execute(
@@ -227,6 +257,14 @@ class WorldsMixin:
                 (make_id("currency"), world_id, now),
             )
             return {"reset_world_id": world_id, "world": self._world_dict(self._get_world_row(conn, world_id))}
+
+    def set_original_opening_scene(self, world_id: str, scene_text: str) -> None:
+        """Store the raw original opening scene (including LLM investigation tags) permanently."""
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE worlds SET original_opening_scene = ? WHERE world_id = ?",
+                (scene_text.strip(), world_id),
+            )
 
     def save_world_handoff(
         self,

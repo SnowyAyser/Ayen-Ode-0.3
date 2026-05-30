@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Ayen-Ode Login</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // Perform auto-login redirect BEFORE rendering to avoid flash if auto-login is active.
+    // Only applies locally on localhost/127.0.0.1 where desktop bootstrapper runs.
+    if (localStorage.getItem('autoLogin') === 'true' && (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost')) {
+      window.location.replace('/desktop-bootstrap');
+    }
+  </script>
   <style>
     #loaderOverlay {
       position: fixed;
@@ -68,6 +75,20 @@
           />
         </div>
 
+        <div id="autoLoginContainer" class="flex items-center justify-between">
+          <div class="flex items-center">
+            <input
+              id="auto-login"
+              name="auto-login"
+              type="checkbox"
+              class="h-4 w-4 rounded border-slate-600 bg-slate-700 text-blue-600 focus:ring-blue-500 focus:ring-offset-slate-800"
+            />
+            <label for="auto-login" class="ml-2 block text-sm text-slate-300 select-none cursor-pointer">
+              Auto Login on Startup
+            </label>
+          </div>
+        </div>
+
         <button
           type="submit"
           class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
@@ -96,17 +117,40 @@
       if (!animating) startAnimation();
 
       try {
-        const resp = await fetch('/api/login', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ username, password }),
-        });
+        let resp = null;
+        let lastErr = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            resp = await fetch('/api/login', {
+              method:  'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body:    JSON.stringify({ username, password }),
+            });
+            break;
+          } catch (err) {
+            lastErr = err;
+            if (attempt < 3) {
+              await new Promise(resolve => setTimeout(resolve, 200));
+            }
+          }
+        }
+
+        if (!resp) {
+          throw lastErr || new Error("Could not reach the server after retries");
+        }
 
         const data = await resp.json();
 
         if (resp.ok && data.token) {
           setToken(data.token);
           localStorage.setItem('savedUsername', username);
+          
+          const autoLoginChecked = document.getElementById('auto-login').checked;
+          localStorage.setItem('autoLogin', autoLoginChecked ? 'true' : 'false');
+          if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.save_auto_login === "function") {
+            try { window.pywebview.api.save_auto_login(autoLoginChecked); } catch (e) {}
+          }
+          
           if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.save_username === "function") {
             try { window.pywebview.api.save_username(username); } catch (e) {}
           }
@@ -251,14 +295,34 @@
       }
     }
 
-    function initDesktopControls() {
+    async function initDesktopControls() {
       if (window.pywebview && window.pywebview.api) {
         document.getElementById("closeWindowBtn")?.classList.remove("hidden");
+        if (typeof window.pywebview.api.get_auto_login === "function") {
+          try {
+            const autoLoginVal = await window.pywebview.api.get_auto_login();
+            const chk = document.getElementById('auto-login');
+            if (chk) chk.checked = !!autoLoginVal;
+          } catch (e) {}
+        }
+      }
+      // Show auto-login checkbox only if running locally (desktop mode / local testing)
+      const isLocal = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost';
+      if (!isLocal) {
+        const container = document.getElementById('autoLoginContainer');
+        if (container) container.classList.add('hidden');
       }
     }
     window.addEventListener('pywebviewready', initDesktopControls);
     window.addEventListener('DOMContentLoaded', initDesktopControls);
     initDesktopControls();
+
+    // Keep the loopback socket connection warm and alive indefinitely
+    // by sending a tiny health ping every 3 seconds while on the login screen.
+    // This prevents Uvicorn's Keep-Alive timeout from closing the socket.
+    setInterval(() => {
+      fetch('/health').catch(() => {});
+    }, 3000);
   </script>
 </body>
 </html>

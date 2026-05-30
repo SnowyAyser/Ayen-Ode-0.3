@@ -78,10 +78,25 @@ class EntitiesMixin:
         entity_id = make_id("entity")
         with self.connect() as conn:
             world_row = self._resolve_world(conn, world) if world else self._require_active_world(conn)
-            existing = conn.execute(
-                "SELECT * FROM entities WHERE world_id = ? AND entity_type = ? AND name = ? COLLATE NOCASE",
-                (world_row["world_id"], entity_type, name.strip()),
-            ).fetchone()
+            clean_name = name.strip()
+            variants = [clean_name]
+            if clean_name.lower().endswith("s"):
+                if clean_name.lower().endswith("es"):
+                    variants.append(clean_name[:-2])
+                variants.append(clean_name[:-1])
+            else:
+                variants.append(clean_name + "s")
+                variants.append(clean_name + "es")
+
+            existing = None
+            for var in variants:
+                existing = conn.execute(
+                    "SELECT * FROM entities WHERE world_id = ? AND LOWER(name) = LOWER(?)",
+                    (world_row["world_id"], var),
+                ).fetchone()
+                if existing:
+                    break
+
             if existing:
                 return {
                     "world": self._world_dict(world_row),

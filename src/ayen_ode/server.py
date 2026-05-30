@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import threading
@@ -27,6 +28,15 @@ from .services.base import make_db_connection, utc_now
 
 settings = load_settings()
 service = AyenOdeService(settings.db_path)
+
+# Reset any stuck processing jobs back to queued on server start/import
+try:
+    with service.connect() as conn:
+        conn.execute("UPDATE investigation_jobs SET status = 'queued' WHERE status = 'processing'")
+        conn.commit()
+except Exception as e:
+    print(f"Error resetting stuck processing jobs: {e}")
+
 
 
 # utc_now is imported from services.base — the local alias keeps call sites unchanged.
@@ -133,7 +143,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-app = AuthMiddleware(cors_app)
+class CacheControlMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
+
+app = CacheControlMiddleware(AuthMiddleware(cors_app))
 
 
 # --- Background Worker ---
@@ -169,29 +188,144 @@ def investigation_worker() -> None:
             world_id = job["world_id"]
             entity_name = job["entity_name"]
             entity_type = job["entity_type"]
+            cost = dict(job).get("cost", 1)
+
+            from datetime import datetime, timezone
+            created_at = job["created_at"]
+            try:
+                if created_at.endswith("Z"):
+                    created_at = created_at[:-1] + "+00:00"
+                created_dt = datetime.fromisoformat(created_at)
+                elapsed = (datetime.now(timezone.utc) - created_dt).total_seconds()
+            except Exception:
+                elapsed = 0.0
 
             try:
-                result = investigate_entity(
-                    settings.anthropic_client, service, world_id, entity_name, entity_type, []
+                # Check if we have pre-generated cached data in SQLite database
+                cached_result = None
+                clean_name = entity_name.strip()
+                variants = [clean_name]
+                if clean_name.lower().endswith("s"):
+                    if clean_name.lower().endswith("es"):
+                        variants.append(clean_name[:-2])
+                    variants.append(clean_name[:-1])
+                else:
+                    variants.append(clean_name + "s")
+                    variants.append(clean_name + "es")
+
+                with service.connect() as conn:
+                    for var in variants:
+                        row_cached = conn.execute(
+                            "SELECT result_json FROM pregenerated_investigations"
+                            " WHERE world_id = ? AND LOWER(entity_name) = LOWER(?)",
+                            (world_id, var),
+                        ).fetchone()
+                        if row_cached:
+                            cached_result = json.loads(row_cached[0])
+                            break
+
+                if cached_result:
+                    # 1. Consume the cached JSON directly
+                    result = cached_result
+                    
+                    # Trigger background auto-pregeneration for any new investigate tags inside the compendium card content
+                    try:
+                        from .relinker import auto_pre_generate_new_investigations
+                        parts = []
+                        if "narrative" in result:
+                            parts.append(result["narrative"])
+                        entity_data = result.get("entity", {})
+                        if "summary" in entity_data:
+                            parts.append(entity_data["summary"])
+                        for note in entity_data.get("timeline_notes", []):
+                            parts.append(note)
+                        for q in entity_data.get("open_questions", []):
+                            parts.append(q)
+                        combined_text = "\n".join(parts)
+                        auto_pre_generate_new_investigations(settings.anthropic_client, service, world_id, combined_text)
+                    except Exception as ex:
+                        print(f"Failed to auto-pregenerate tags from compendium card: {ex}")
+
+                    # 2. Sleep for the remaining pacing countdown relative to created_at
+                    remaining = 60.0 - elapsed
+                    if remaining > 0:
+                        time.sleep(remaining)
+                else:
+                    # 3. Fallback: Query Claude immediately if not cached (fallback path)
+                    job_context = dict(job).get("context")
+                    result = investigate_entity(
+                        settings.anthropic_client, service, world_id, entity_name, entity_type, [], save_to_db=False, context=job_context
+                    )
+                    
+                    # Trigger background auto-pregeneration for any new investigate tags inside the compendium card content
+                    try:
+                        from .relinker import auto_pre_generate_new_investigations
+                        parts = []
+                        if "narrative" in result:
+                            parts.append(result["narrative"])
+                        entity_data = result.get("entity", {})
+                        if "summary" in entity_data:
+                            parts.append(entity_data["summary"])
+                        for note in entity_data.get("timeline_notes", []):
+                            parts.append(note)
+                        for q in entity_data.get("open_questions", []):
+                            parts.append(q)
+                        combined_text = "\n".join(parts)
+                        auto_pre_generate_new_investigations(settings.anthropic_client, service, world_id, combined_text)
+                    except Exception as ex:
+                        print(f"Failed to auto-pregenerate tags from compendium card: {ex}")
+
+                    try:
+                        elapsed_after = (datetime.now(timezone.utc) - created_dt).total_seconds()
+                    except Exception:
+                        elapsed_after = time.time() - start_time
+                    remaining = 60.0 - elapsed_after
+                    if remaining > 0:
+                        time.sleep(remaining)
+
+                # --- 4. Persist to SQLite DB since the investigation is now officially complete! ---
+                entity_data = result.get("entity", {})
+                entity_result = service.create_entity(
+                    name=entity_name,
+                    entity_type=entity_type,
+                    summary=entity_data.get("summary", ""),
+                    world=world_id,
+                    tags=entity_data.get("tags", []),
+                    timeline_notes=entity_data.get("timeline_notes", []),
+                    stats=result.get("stats", {}),
                 )
-                entity_id = result.get("entity", {}).get("entity_id")
+                entity = entity_result.get("entity", {})
+                entity_id = entity.get("entity_id")
+
+                if entity_id:
+                    service.record_investigation(
+                        item_name=entity_name,
+                        world=world_id,
+                        entity_id=entity_id,
+                    )
+                    try:
+                        from .relinker import run_database_relinking
+                        threading.Thread(target=run_database_relinking, args=(service, settings), daemon=True).start()
+                    except Exception:
+                        pass
+
                 service.complete_investigation_job(
                     job_id,
                     entity_id,
                     {
                         "narrative": result.get("narrative", ""),
-                        "entity": result.get("entity", {}),
+                        "entity": entity,
                         "stats": result.get("stats", {}),
                     },
                 )
-                service.restore_investigation_points(1, world=world_id)
+                service.restore_investigation_points(cost, world=world_id)
             except Exception as e:
                 with service.connect() as conn:
                     conn.execute(
                         "UPDATE investigation_jobs SET status = 'failed' WHERE job_id = ?",
                         (job_id,),
                     )
-                service.restore_investigation_points(1, world=world_id)
+                service.restore_investigation_points(cost, world=world_id)
         except Exception as e:
             print(f"Investigation worker error: {e}")
             time.sleep(1)
@@ -202,6 +336,7 @@ def investigation_worker() -> None:
 
 def main() -> None:
     import uvicorn
+    from .relinker import run_database_relinking
 
     worker_thread = threading.Thread(target=investigation_worker, daemon=True)
     worker_thread.start()

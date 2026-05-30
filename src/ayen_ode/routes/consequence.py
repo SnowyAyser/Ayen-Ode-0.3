@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from starlette.requests import Request
@@ -10,6 +11,25 @@ from starlette.routing import Route
 
 from ..narrative import process_user_action, investigate_entity
 from ..context_assembler import ContextAssembler
+from ..services.base import utc_now
+
+
+def are_names_equivalent(a: str, b: str) -> bool:
+    a_clean = a.strip().lower()
+    b_clean = b.strip().lower()
+    if a_clean == b_clean:
+        return True
+    def get_variants(name: str):
+        vars_set = {name}
+        if name.endswith("s"):
+            if name.endswith("es"):
+                vars_set.add(name[:-2])
+            vars_set.add(name[:-1])
+        else:
+            vars_set.add(name + "s")
+            vars_set.add(name + "es")
+        return vars_set
+    return len(get_variants(a_clean).intersection(get_variants(b_clean))) > 0
 
 
 def make_consequence_routes(service: Any, settings: Any, sessions: Any) -> list:
@@ -173,9 +193,10 @@ def make_consequence_routes(service: Any, settings: Any, sessions: Any) -> list:
             cost = data.get("cost", 1)
             if not world_id or not item_name:
                 return JSONResponse({"error": "Missing world_id or item_name"}, status_code=400)
+
             investigation_state = service.get_investigation_state(world_id)
             already_investigated = any(
-                inv["item_name"].lower() == item_name.lower()
+                are_names_equivalent(inv["item_name"], item_name)
                 for inv in investigation_state.get("investigations", [])
             )
             if already_investigated:
@@ -184,7 +205,7 @@ def make_consequence_routes(service: Any, settings: Any, sessions: Any) -> list:
                 )
             active_queue = service.get_investigation_queue(world_id)
             already_queued = any(
-                job["entity_name"].lower() == item_name.lower()
+                are_names_equivalent(job["entity_name"], item_name)
                 for job in active_queue.get("jobs", [])
             )
             if already_queued:
@@ -197,8 +218,9 @@ def make_consequence_routes(service: Any, settings: Any, sessions: Any) -> list:
                     {"error": f"Insufficient investigation points: need {cost}, have {currency.get('balance', 0)}"},
                     status_code=400,
                 )
+            context = data.get("context", "")
             service.spend_investigation_points(cost, world=world_id)
-            job = service.create_investigation_job(item_name, entity_type, world=world_id)
+            job = service.create_investigation_job(item_name, entity_type, cost=cost, context=context, world=world_id)
             updated_currency = service.get_investigation_balance(world_id)
             return JSONResponse({
                 "world_id": world_id,
@@ -220,6 +242,67 @@ def make_consequence_routes(service: Any, settings: Any, sessions: Any) -> list:
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
+    async def pre_generate_investigation_handler(request: Request) -> JSONResponse:
+        try:
+            data = await request.json()
+            world_id = data.get("world_id")
+            item_name = data.get("item_name", "")
+            entity_type = data.get("entity_type", "object")
+            if not world_id or not item_name:
+                return JSONResponse({"error": "Missing world_id or item_name"}, status_code=400)
+            
+            # 1. Check if already pre-generated in SQLite database (with singular/plural variants)
+            with service.connect() as conn:
+                cached_items = conn.execute(
+                    "SELECT entity_name FROM pregenerated_investigations WHERE world_id = ?",
+                    (world_id,),
+                ).fetchall()
+                for (cached_name,) in cached_items:
+                    if are_names_equivalent(cached_name, item_name):
+                        return JSONResponse({"success": True, "cached": True})
+
+            # 2. Check if already in compendium/investigated (with singular/plural variants)
+            investigation_state = service.get_investigation_state(world_id)
+            already_investigated = any(
+                are_names_equivalent(inv["item_name"], item_name)
+                for inv in investigation_state.get("investigations", [])
+            )
+            if already_investigated:
+                return JSONResponse({"success": True, "already_investigated": True})
+
+            context = data.get("context", "")
+
+            # 3. Call Claude immediately (pre-fetch) in a separate worker thread to avoid blocking the event loop
+            import functools
+            from anyio.to_thread import run_sync
+            func = functools.partial(
+                investigate_entity,
+                settings.anthropic_client,
+                service,
+                world_id,
+                item_name,
+                entity_type,
+                [],
+                save_to_db=False,
+                context=context
+            )
+            result = await run_sync(func)
+
+            # 4. Save results to pregenerated_investigations cache
+            now = utc_now()
+            with service.connect() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO pregenerated_investigations"
+                    " (world_id, entity_name, entity_type, result_json, created_at)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (world_id, item_name.strip(), entity_type.strip(), json.dumps(result), now),
+                )
+
+            return JSONResponse({"success": True, "cached": False})
+        except Exception as e:
+            print(f"Pre-generation error for {item_name}: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
     async def narrative_handler(request: Request) -> JSONResponse:
         try:
             data = await request.json()
@@ -229,7 +312,11 @@ def make_consequence_routes(service: Any, settings: Any, sessions: Any) -> list:
             player_entity_id = data.get("player_entity_id")
             if not world_id or not user_action:
                 return JSONResponse({"error": "Missing world_id or action"}, status_code=400)
-            response, updated_history = process_user_action(
+            import functools
+            from anyio.to_thread import run_sync
+            # Run blocking process_user_action in a separate worker thread to avoid blocking the event loop
+            func = functools.partial(
+                process_user_action,
                 settings.anthropic_client,
                 service,
                 world_id,
@@ -237,6 +324,7 @@ def make_consequence_routes(service: Any, settings: Any, sessions: Any) -> list:
                 history,
                 player_entity_id=player_entity_id,
             )
+            response, updated_history = await run_sync(func)
             currency = service.restore_investigation_points(1, world=world_id)
             game_time = service.get_world_time(world=world_id)
             return JSONResponse({
@@ -309,6 +397,7 @@ def make_consequence_routes(service: Any, settings: Any, sessions: Any) -> list:
         Route("/api/worlds/{world_id}/consequences/context-packet", context_packet_handler, methods=["GET"]),
         Route("/api/narrative", narrative_handler, methods=["POST"]),
         Route("/api/investigate", investigate_handler, methods=["POST"]),
+        Route("/api/investigate/pre-generate", pre_generate_investigation_handler, methods=["POST"]),
         Route("/api/investigate/{job_id}", get_investigation_handler, methods=["GET"]),
         Route("/api/worlds/{world_id}/skip-time", skip_time_handler, methods=["POST"]),
     ]

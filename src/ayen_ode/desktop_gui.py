@@ -114,16 +114,27 @@ def _split_investigate(text: str):
         attrs = m.group(1)
         display = m.group(2).strip()
         item_name, entity_type, cost = "", "object", 1
-        for am in re.finditer(r"(item|npc|location|faction|event)='([^']+)'", attrs):
-            item_name = am.group(2)
-            t = am.group(1)
-            if t == "npc":        entity_type = "character"
-            elif t == "location": entity_type = "location"
-            elif t == "faction":  entity_type = "faction"
-            elif t == "event":    entity_type = "event"
-        cm = re.search(r"cost='(\d+)'", attrs)
+        item_matches = list(re.finditer(r"(item|npc|location|faction|event)=(['\"])(.*?)\2", attrs))
+        if not item_matches:
+            item_matches = list(re.finditer(r"(item|npc|location|faction|event)=([^\s'\">]+)", attrs))
+            for am in item_matches:
+                item_name = am.group(2)
+                t = am.group(1)
+                if t == "npc":        entity_type = "character"
+                elif t == "location": entity_type = "location"
+                elif t == "faction":  entity_type = "faction"
+                elif t == "event":    entity_type = "event"
+        else:
+            for am in item_matches:
+                item_name = am.group(3)
+                t = am.group(1)
+                if t == "npc":        entity_type = "character"
+                elif t == "location": entity_type = "location"
+                elif t == "faction":  entity_type = "faction"
+                elif t == "event":    entity_type = "event"
+        cm = re.search(r"cost=(['\"]?)(\d+)\1", attrs)
         if cm:
-            cost = int(cm.group(1))
+            cost = int(cm.group(2))
         result.append((display or item_name, (item_name or display, entity_type, cost)))
         last = m.end()
     if last < len(text):

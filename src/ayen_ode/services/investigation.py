@@ -45,11 +45,11 @@ class InvestigationMixin:
             ).fetchone()
             if not currency:
                 return {"world_id": row["world_id"], "balance": 0, "max_balance": 0, "error": "No currency initialized"}
-            active_jobs = conn.execute(
-                "SELECT COUNT(*) FROM investigation_jobs WHERE world_id = ? AND status IN ('queued', 'processing')",
+            active_jobs_cost = conn.execute(
+                "SELECT COALESCE(SUM(cost), 0) FROM investigation_jobs WHERE world_id = ? AND status IN ('queued', 'processing')",
                 (row["world_id"],),
             ).fetchone()[0]
-            min_available = max(0, currency["max_balance"] - active_jobs)
+            min_available = max(0, currency["max_balance"] - active_jobs_cost)
             corrected = max(currency["current_balance"], min_available)
             if corrected != currency["current_balance"]:
                 conn.execute(
@@ -178,6 +178,8 @@ class InvestigationMixin:
         self,
         entity_name: str,
         entity_type: str,
+        cost: int = 1,
+        context: str | None = None,
         world: str | None = None,
     ) -> dict[str, Any]:
         """Create an async investigation job."""
@@ -188,10 +190,10 @@ class InvestigationMixin:
             conn.execute(
                 """
                 INSERT INTO investigation_jobs
-                (job_id, world_id, entity_name, entity_type, status, created_at)
-                VALUES (?, ?, ?, ?, 'queued', ?)
+                (job_id, world_id, entity_name, entity_type, status, cost, context, created_at)
+                VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)
                 """,
-                (job_id, row["world_id"], entity_name.strip(), entity_type.strip(), now),
+                (job_id, row["world_id"], entity_name.strip(), entity_type.strip(), cost, context, now),
             )
             return {
                 "job_id": job_id,
@@ -199,6 +201,8 @@ class InvestigationMixin:
                 "entity_name": entity_name.strip(),
                 "entity_type": entity_type.strip(),
                 "status": "queued",
+                "cost": cost,
+                "context": context,
                 "created_at": now,
             }
 
@@ -222,6 +226,8 @@ class InvestigationMixin:
                 "entity_name": job["entity_name"],
                 "entity_type": job["entity_type"],
                 "status": job["status"],
+                "cost": dict(job).get("cost", 1),
+                "context": dict(job).get("context"),
                 "entity_id": job["entity_id"],
                 "result": result,
                 "created_at": job["created_at"],

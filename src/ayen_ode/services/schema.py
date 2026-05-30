@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS worlds (
     current_state_summary TEXT NOT NULL DEFAULT '',
     active_tensions_json TEXT NOT NULL DEFAULT '[]',
     last_system_handoff TEXT NOT NULL DEFAULT '',
+    original_opening_scene TEXT NOT NULL DEFAULT '',
     game_time_seconds INTEGER NOT NULL DEFAULT 0,
     game_time_label   TEXT    NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
@@ -109,6 +110,8 @@ CREATE TABLE IF NOT EXISTS investigation_jobs (
     entity_name TEXT NOT NULL,
     entity_type TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'queued',
+    cost INTEGER NOT NULL DEFAULT 1,
+    context TEXT,
     entity_id TEXT REFERENCES entities(entity_id) ON DELETE SET NULL,
     result_json TEXT,
     created_at TEXT NOT NULL,
@@ -241,6 +244,15 @@ CREATE TABLE IF NOT EXISTS intake_logs (
     game_time_label TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS pregenerated_investigations (
+    world_id TEXT NOT NULL REFERENCES worlds(world_id) ON DELETE CASCADE,
+    entity_name TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (world_id, entity_name)
+);
 """
 
 
@@ -260,3 +272,41 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE worlds ADD COLUMN game_time_label TEXT NOT NULL DEFAULT ''")
     if "narrative_turn_count" not in world_cols:
         conn.execute("ALTER TABLE worlds ADD COLUMN narrative_turn_count INTEGER NOT NULL DEFAULT 0")
+    if "original_opening_scene" not in world_cols:
+        conn.execute("ALTER TABLE worlds ADD COLUMN original_opening_scene TEXT NOT NULL DEFAULT ''")
+        # Backfill original_opening_scene from the oldest handoff for existing worlds
+        conn.execute(
+            """
+            UPDATE worlds
+            SET original_opening_scene = COALESCE(
+                (
+                    SELECT handoff_text
+                    FROM world_handoffs
+                    WHERE world_handoffs.world_id = worlds.world_id
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                ),
+                ''
+            )
+            WHERE original_opening_scene = ''
+            """
+        )
+
+    job_cols = {row[1] for row in conn.execute("PRAGMA table_info(investigation_jobs)").fetchall()}
+    if "cost" not in job_cols:
+        conn.execute("ALTER TABLE investigation_jobs ADD COLUMN cost INTEGER NOT NULL DEFAULT 1")
+    if "context" not in job_cols:
+        conn.execute("ALTER TABLE investigation_jobs ADD COLUMN context TEXT")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pregenerated_investigations (
+            world_id TEXT NOT NULL REFERENCES worlds(world_id) ON DELETE CASCADE,
+            entity_name TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            result_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (world_id, entity_name)
+        );
+        """
+    )

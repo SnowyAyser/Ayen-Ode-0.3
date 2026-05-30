@@ -15,6 +15,29 @@ const compendiumSectionState = {};
 
 let timerTickInterval = null;
 
+function updateInvestigationPointsDisplay() {
+  const el = document.getElementById("investigationPoints");
+  if (el) {
+    el.textContent = `${investigationPoints}/${maxInvestigationPoints}`;
+  }
+}
+
+async function updateCurrencyFromServer() {
+  if (!currentWorldId) return;
+  try {
+    const data = await apiCall(`/api/worlds/${currentWorldId}/currencies`);
+    if (data && data.balance !== undefined) {
+      investigationPoints = data.balance;
+      if (data.max_balance !== undefined) {
+        maxInvestigationPoints = data.max_balance;
+      }
+      updateInvestigationPointsDisplay();
+    }
+  } catch (e) {
+    console.error("Error updating currency:", e);
+  }
+}
+
 // Settings
 const SETTINGS_KEY = 'ayen_ode_settings';
 function getSettings() {
@@ -59,12 +82,109 @@ function loadHistoryFromStorage() {
   try { return JSON.parse(localStorage.getItem(_historyKey(currentWorldId)) || '[]'); } catch { return []; }
 }
 
+function linkifyDOMTextNodes(node) {
+  if (node.nodeType === Node.TEXT_NODE) {
+    const text = node.nodeValue;
+    if (!text) return;
+
+    // Build unified candidates list
+    const completed = (currentEntities || []).map(e => ({ name: e.name, type: 'completed', entity: e }));
+    
+    const active = Object.values(activeInvestigations || {})
+      .filter(inv => inv.status === 'queued' || inv.status === 'processing')
+      .map(inv => ({ name: inv.itemName, type: 'active', inv }));
+      
+    const available = Array.from(document.querySelectorAll('.investigate-btn'))
+      .filter(el => el.getAttribute('data-investigating') !== 'true')
+      .map(el => ({
+        name: el.getAttribute('data-inv-item'),
+        type: 'available',
+        entityType: el.getAttribute('data-inv-type') || 'object',
+        cost: parseInt(el.getAttribute('data-inv-cost') || '1')
+      }))
+      .filter(c => c.name);
+
+    const candidateMap = new Map();
+    available.forEach(c => candidateMap.set(c.name.toLowerCase(), c));
+    active.forEach(c => candidateMap.set(c.name.toLowerCase(), c));
+    completed.forEach(c => candidateMap.set(c.name.toLowerCase(), c));
+
+    const candidates = Array.from(candidateMap.values())
+      .filter(c => c.name && c.name.length >= 2)
+      .sort((a, b) => b.name.length - a.name.length);
+
+    if (!candidates.length) return;
+
+    const matches = [];
+    candidates.forEach(candidate => {
+      const escaped = candidate.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const base = escaped.endsWith('s') ? (escaped.endsWith('es') ? escaped.slice(0, -2) + '(es)?' : escaped.slice(0, -1) + 's?') : escaped;
+      const regex = new RegExp(`\\b${base}(s|es)?\\b`, 'gi');
+      let m;
+      while ((m = regex.exec(text)) !== null) {
+        matches.push({ start: m.index, end: m.index + m[0].length, candidate, matched: m[0] });
+      }
+    });
+    if (!matches.length) return;
+
+    matches.sort((a, b) => a.start - b.start);
+    const noOverlap = [];
+    let lastEnd = 0;
+    for (const m of matches) {
+      if (m.start >= lastEnd) { noOverlap.push(m); lastEnd = m.end; }
+    }
+
+    const fragment = document.createDocumentFragment();
+    let pos = 0;
+    for (const m of noOverlap) {
+      if (m.start > pos) {
+        fragment.appendChild(document.createTextNode(text.slice(pos, m.start)));
+      }
+      
+      let btn;
+      if (m.candidate.type === 'completed') {
+        btn = document.createElement('button');
+        btn.className = "text-slate-300 hover:text-emerald-400 underline decoration-dotted decoration-emerald-500 underline-offset-2 transition-colors text-[inherit] leading-[inherit] investigated-btn";
+        const ename = m.candidate.entity.name.replace(/'/g, "\\'");
+        btn.setAttribute('onclick', `openInvestigatedEntity('${ename}')`);
+        btn.textContent = m.matched;
+      } else if (m.candidate.type === 'active') {
+        const inv = m.candidate.inv;
+        btn = _htmlToElement(investigatingBtnHtml(inv.itemName, inv.entityType, inv.cost || 1, m.matched));
+      } else {
+        const c = m.candidate;
+        btn = _htmlToElement(investigateBtnHtml(c.name, c.entityType, c.cost, m.matched));
+      }
+      
+      fragment.appendChild(btn);
+      pos = m.end;
+    }
+    if (pos < text.length) {
+      fragment.appendChild(document.createTextNode(text.slice(pos)));
+    }
+
+    node.parentNode.replaceChild(fragment, node);
+    return;
+  }
+
+  const skipTags = ['BUTTON', 'A', 'SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT'];
+  if (node.nodeType === Node.ELEMENT_NODE && skipTags.includes(node.tagName)) {
+    return;
+  }
+
+  const children = Array.from(node.childNodes);
+  for (const child of children) {
+    linkifyDOMTextNodes(child);
+  }
+}
+
 function _makeNarrativeBlock(content) {
   const parsed = parseInvestigateText(content);
   const html = parsed.text.split('\n').map(p => p.trim()).filter(p => p).map(p => `<p>${p}</p>`).join('');
   const div = document.createElement('div');
   div.className = 'narrative-block text-slate-200 leading-7 space-y-3';
   div.innerHTML = html;
+  linkifyDOMTextNodes(div);
   return div;
 }
 
@@ -158,6 +278,7 @@ async function playOpeningSceneIntro(handoffText) {
   const skipHandler = () => {
     if (skipBtn) { skipBtn.remove(); skipBtn = null; }
     block.innerHTML = lines.map(l => `<p>${l}</p>`).join('');
+    linkifyDOMTextNodes(block);
   };
   skipBtn = _showSkipButton(skipHandler);
 
@@ -173,6 +294,7 @@ async function playOpeningSceneIntro(handoffText) {
     // Can't animate char-by-char through HTML tags — just reveal instantly
     first.innerHTML = firstLine;
     first.classList.add('done');
+    linkifyDOMTextNodes(first);
   } else {
     const charDelay = Math.min(35, Math.max(12, 2400 / Math.max(1, firstLine.length)));
     for (let i = 0; i < firstLine.length; i++) {
@@ -183,6 +305,7 @@ async function playOpeningSceneIntro(handoffText) {
     if (!_introSkipRequested) {
       first.textContent = firstLine;
       first.classList.add('done');
+      linkifyDOMTextNodes(first);
     }
   }
 
@@ -193,6 +316,7 @@ async function playOpeningSceneIntro(handoffText) {
     p.className = 'intro-line';
     p.innerHTML = lines[i];
     block.appendChild(p);
+    linkifyDOMTextNodes(p);
     requestAnimationFrame(() => p.classList.add('show'));
     await _sleep(380);
   }
@@ -232,6 +356,9 @@ async function loadWorld() {
     currentWorldId = data.world_id;
     restoreDraft();
     currentEntities = data.entities || [];
+    if (typeof restoreActiveInvestigations === 'function') {
+      restoreActiveInvestigations(data.investigations || []);
+    }
     const world = data.world;
     document.getElementById("worldName").textContent = world.name || "Unknown World";
     document.getElementById("worldPremise").textContent = world.premise || "";
@@ -315,6 +442,10 @@ async function loadWorld() {
     console.error("Error loading world:", error);
     document.getElementById("narrativeContent").innerHTML =
       `<div class="text-red-400 text-center py-12"><p>Error loading world: ${error.message}</p></div>`;
+    // Ensure the blackout overlay is removed so the error is visible to the user!
+    document.documentElement.classList.remove('entering');
+    const b = document.getElementById('navBlackout');
+    if (b) b.remove();
   }
 }
 
@@ -482,6 +613,10 @@ function loadWorldState() {
     });
 
     document.getElementById("entityListView").innerHTML = html;
+    const narrativeDiv = document.getElementById("narrativeContent");
+    if (narrativeDiv) {
+      linkifyDOMTextNodes(narrativeDiv);
+    }
   } catch (error) {
     console.error("Error loading world state:", error);
   }
@@ -682,7 +817,11 @@ document.getElementById("compendiumSearch").addEventListener("input", loadWorldS
   const btn = document.getElementById('settingsBtn');
   const popover = document.getElementById('settingsPopover');
   const toggle = document.getElementById('confirmToggle');
-  if (!btn || !popover || !toggle) return;
+  console.log("[SettingsPopover] Elements found:", { btn, popover, toggle });
+  if (!btn || !popover || !toggle) {
+    console.warn("[SettingsPopover] Initialization failed: missing element!");
+    return;
+  }
 
   function syncToggle() {
     const on = !!getSettings().confirmBeforeSend;
@@ -695,6 +834,7 @@ document.getElementById("compendiumSearch").addEventListener("input", loadWorldS
   syncToggle();
 
   btn.addEventListener('click', (e) => {
+    console.log("[SettingsPopover] Click registered!");
     e.stopPropagation();
     popover.classList.toggle('hidden');
     syncToggle();
@@ -772,4 +912,12 @@ document.addEventListener('click', (e) => {
   });
 
   el.addEventListener('keydown', (e) => {
-    if (e.
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      document.getElementById('actionForm').requestSubmit();
+    } else if (e.key === 'Escape' && pendingConfirm) {
+      e.preventDefault();
+      _cancelPendingConfirm();
+    }
+  });
+})();

@@ -13,7 +13,7 @@ function toggleQuestPanel() {
 async function loadQuests() {
   if (!currentWorldId) return;
   try {
-    const data = await apiFetch(`/api/worlds/${currentWorldId}/quests`);
+    const data = await apiCall(`/api/worlds/${currentWorldId}/quests`);
     renderQuestPanel(data.quests || []);
   } catch (e) {
     // Silent — quest panel is non-critical
@@ -111,7 +111,7 @@ function renderThreadCard(q) {
 async function promoteQuest(questId) {
   if (!currentWorldId) return;
   try {
-    await apiFetch(`/api/worlds/${currentWorldId}/quests/${questId}/promote`, { method: 'POST' });
+    await apiCall(`/api/worlds/${currentWorldId}/quests/${questId}/promote`, 'POST');
     await loadQuests();
   } catch (e) {}
 }
@@ -119,7 +119,7 @@ async function promoteQuest(questId) {
 async function dismissQuest(questId) {
   if (!currentWorldId) return;
   try {
-    await apiFetch(`/api/worlds/${currentWorldId}/quests/${questId}/dismiss`, { method: 'POST' });
+    await apiCall(`/api/worlds/${currentWorldId}/quests/${questId}/dismiss`, 'POST');
     await loadQuests();
   } catch (e) {}
 }
@@ -127,9 +127,9 @@ async function dismissQuest(questId) {
 async function checkQuestProgress(questId) {
   if (!currentWorldId) return;
   try {
-    const data = await apiFetch(
+    const data = await apiCall(
       `/api/worlds/${currentWorldId}/quests/${questId}/check`,
-      { method: 'POST' }
+      'POST'
     );
     // Reveal tags and show progress in the panel
     await loadQuests();

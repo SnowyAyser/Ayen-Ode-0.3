@@ -65,6 +65,10 @@ async function logout() {
       headers: { "Authorization": `Bearer ${token}` },
     }).catch(() => {});
   }
+  if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.save_auto_login === "function") {
+    try { await window.pywebview.api.save_auto_login(false); } catch (e) {}
+  }
+  localStorage.removeItem('autoLogin');
   clearToken();
   window.location.href = "/";
 }
@@ -84,3 +88,21 @@ document.addEventListener("keydown", (e) => {
     document.documentElement.requestFullscreen?.();
   }
 });
+
+window.onerror = function(message, source, lineno, colno, error) {
+  const token = localStorage.getItem("apiKey");
+  fetch('/api/logs/error', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify({
+      message: message || "Unknown",
+      source: source || "unknown",
+      lineno: lineno || 0,
+      colno: colno || 0,
+      stack: error ? error.stack : ""
+    })
+  }).catch(() => {});
+};

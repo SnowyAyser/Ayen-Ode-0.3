@@ -11,7 +11,7 @@ from starlette.routing import Route
 from ..narrative import initialize_world
 
 
-def _assemble_world_data(service: Any, world_id: str | None) -> dict[str, Any]:
+def _assemble_world_data(service: Any, settings: Any, world_id: str | None) -> dict[str, Any]:
     """Resolve optional world_id and return world, handoff, and entity data."""
     if not world_id:
         active = service.get_active_world()
@@ -26,13 +26,30 @@ def _assemble_world_data(service: Any, world_id: str | None) -> dict[str, Any]:
         world_status = service.get_world_status(world_id)
         world = world_status.get("world", {})
     handoff = service.get_world_handoff(world_id)
+    handoff_text = handoff.get("handoff", "")
+    if not handoff_text or not handoff_text.strip():
+        try:
+            from ..narrative import initialize_world
+            handoff_text = initialize_world(
+                client=settings.anthropic_client,
+                service=service,
+                world_id=world_id,
+                name=world.get("name", "Untitled World"),
+                premise=world.get("premise", ""),
+                theme_tone=world.get("theme_tone", ""),
+                player_role=world.get("player_role", ""),
+            )
+        except Exception:
+            pass
     entities = service.list_entities(world=world_id)
+    queue = service.get_investigation_queue(world=world_id)
     return {
         "success": True,
         "world_id": world_id,
         "world": world,
-        "handoff": handoff.get("handoff", ""),
+        "handoff": handoff_text,
         "entities": entities.get("entities", []),
+        "investigations": queue.get("jobs", []),
     }
 
 
@@ -83,6 +100,16 @@ def make_worlds_routes(service: Any, settings: Any, sessions: Any) -> list:
         try:
             world_id = request.path_params.get("world_id")
             result = service.reset_world(world_id)
+            
+            # Immediately background pre-generate any links in the original opening scene
+            original_text = result.get("world", {}).get("original_opening_scene", "")
+            if original_text and settings.anthropic_client:
+                try:
+                    from ..relinker import auto_pre_generate_new_investigations
+                    auto_pre_generate_new_investigations(settings.anthropic_client, service, world_id, original_text)
+                except Exception:
+                    pass
+                    
             return JSONResponse({"success": True, **result})
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
@@ -153,8 +180,11 @@ def make_worlds_routes(service: Any, settings: Any, sessions: Any) -> list:
     async def get_world_data(request: Request) -> JSONResponse:
         try:
             world_id = request.query_params.get("world_id")
-            return JSONResponse(_assemble_world_data(service, world_id))
+            return JSONResponse(_assemble_world_data(service, settings, world_id))
         except Exception as e:
+            import traceback, sys
+            sys.stderr.write(f"\n[ERROR] get_world_data failed:\n")
+            traceback.print_exc()
             return JSONResponse({"error": str(e)}, status_code=500)
 
     async def create_and_init_world(request: Request) -> JSONResponse:
@@ -176,7 +206,11 @@ def make_worlds_routes(service: Any, settings: Any, sessions: Any) -> list:
             world_id = world_result.get("world", {}).get("world_id")
             if not world_id:
                 return JSONResponse({"error": "Failed to create world"}, status_code=500)
-            initial_scene = initialize_world(
+            import functools
+            from anyio.to_thread import run_sync
+            # Run blocking initialize_world in a separate worker thread to avoid blocking the event loop
+            func = functools.partial(
+                initialize_world,
                 settings.anthropic_client,
                 service,
                 world_id,
@@ -185,8 +219,12 @@ def make_worlds_routes(service: Any, settings: Any, sessions: Any) -> list:
                 theme_tone,
                 player_role,
             )
+            initial_scene = await run_sync(func)
             return JSONResponse({"world_id": world_id, "initial_scene": initial_scene, "success": True})
         except Exception as e:
+            import traceback, sys
+            sys.stderr.write(f"\n[ERROR] create_and_init_world failed:\n")
+            traceback.print_exc()
             return JSONResponse({"error": str(e)}, status_code=500)
 
     async def init_world(request: Request) -> JSONResponse:
@@ -199,7 +237,11 @@ def make_worlds_routes(service: Any, settings: Any, sessions: Any) -> list:
             player_role = data.get("player_role", "")
             if not world_id:
                 return JSONResponse({"error": "Missing world_id"}, status_code=400)
-            initial_scene = initialize_world(
+            import functools
+            from anyio.to_thread import run_sync
+            # Run blocking initialize_world in a separate worker thread to avoid blocking the event loop
+            func = functools.partial(
+                initialize_world,
                 settings.anthropic_client,
                 service,
                 world_id,
@@ -208,8 +250,12 @@ def make_worlds_routes(service: Any, settings: Any, sessions: Any) -> list:
                 theme_tone,
                 player_role,
             )
+            initial_scene = await run_sync(func)
             return JSONResponse({"world_id": world_id, "initial_scene": initial_scene, "success": True})
         except Exception as e:
+            import traceback, sys
+            sys.stderr.write(f"\n[ERROR] init_world failed:\n")
+            traceback.print_exc()
             return JSONResponse({"error": str(e)}, status_code=500)
 
     return [

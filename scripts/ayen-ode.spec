@@ -151,7 +151,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,                 # add path to .ico here once we have one
+    icon="../icon_v2.ico",
 )
 # No COLLECT block — this is a single-file build. The EXE above is the
 # entire deliverable.

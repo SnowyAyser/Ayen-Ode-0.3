@@ -73,6 +73,11 @@ def make_auth_routes(service: Any, settings: Any, sessions: Any) -> list:
         password = data.get("password", "")
         if username == settings.app_username and password == settings.app_password:
             token = sessions.create()
+            try:
+                from ..relinker import run_database_relinking
+                threading.Thread(target=run_database_relinking, args=(service, settings), daemon=True).start()
+            except Exception:
+                pass
             return JSONResponse({"token": token})
         return JSONResponse({"error": "Invalid credentials"}, status_code=401)
 
@@ -227,6 +232,25 @@ def make_auth_routes(service: Any, settings: Any, sessions: Any) -> list:
         threading.Thread(target=_delayed_exit, daemon=True).start()
         return JSONResponse({"ok": True})
 
+    async def frontend_error_log_handler(request: Request) -> JSONResponse:
+        try:
+            data = await request.json()
+            message = data.get("message", "Unknown error")
+            source = data.get("source", "unknown")
+            lineno = data.get("lineno", 0)
+            colno = data.get("colno", 0)
+            stack = data.get("stack", "")
+            
+            import sys
+            sys.stderr.write(
+                f"\n[FRONTEND ERROR] {message}\n"
+                f"  Source: {source} (line {lineno}, col {colno})\n"
+                f"  Stack: {stack}\n\n"
+            )
+            return JSONResponse({"success": True})
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
     async def desktop_bootstrap_handler(request: Request) -> Any:
         """Serve a one-shot HTML page that sets the session token in localStorage
         and redirects to the dashboard. Only available in desktop mode and only
@@ -241,6 +265,11 @@ def make_auth_routes(service: Any, settings: Any, sessions: Any) -> list:
         if not _is_loopback(_client_ip(request)):
             return PlainTextResponse("Forbidden", status_code=403)
         token = sessions.create()
+        try:
+            from ..relinker import run_database_relinking
+            threading.Thread(target=run_database_relinking, args=(service, settings), daemon=True).start()
+        except Exception:
+            pass
         # token is hex from secrets.token_hex(32) — safe to inline without escaping.
         html = (
             "<!doctype html><html><head><meta charset=\"utf-8\"><title>Ayen-Ode</title>"
@@ -269,4 +298,5 @@ def make_auth_routes(service: Any, settings: Any, sessions: Any) -> list:
         Route("/api/settings", settings_get_handler, methods=["GET"]),
         Route("/api/settings", settings_post_handler, methods=["POST"]),
         Route("/api/restart", restart_handler, methods=["POST"]),
+        Route("/api/logs/error", frontend_error_log_handler, methods=["POST"]),
     ]
