@@ -321,6 +321,10 @@ The narrative page has a smaller gear in the input bar that opens the same modal
 
 ## Conventions
 
+### File Length Limits
+- **Strict Limit**: All files in the codebase MUST NOT exceed 300 lines of code.
+- If a file grows past 300 lines, it must be split up into smaller, modular submodules.
+
 ### Colours (desktop/ package)
 Defined in `desktop/colors.py`. Always import from there — never hardcode hex in
 customtkinter code.

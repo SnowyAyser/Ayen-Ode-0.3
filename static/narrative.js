@@ -4,6 +4,11 @@
   const submodules = [
     '/static/narrative-core.js',
     '/static/narrative-dom.js',
+    '/static/narrative-bootstrap.js',
+    '/static/narrative-compendium.js',
+    '/static/narrative-map-data.js',
+    '/static/narrative-map-render.js',
+    '/static/narrative-modal.js',
     '/static/narrative-actions.js',
     '/static/narrative-settings.js'
   ];
