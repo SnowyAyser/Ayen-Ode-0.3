@@ -41,7 +41,8 @@ def process_user_action(
         "paladin",
         "wooden chest",
         "chest",
-        "stone archway"
+        "stone archway",
+        "door"
     ]
     known_subjects_lower = [k.lower() for k in known_subjects]
     for subj in default_scene_subjects:
@@ -59,7 +60,7 @@ def process_user_action(
 
     # Construct the instruction prompt
     system_prompt = (
-        "You are an action-detection assistant. Check if the player's action indicates the general idea or intent of either of the actions below (it does not need to match the exact wording). If they did, output ONLY the corresponding JSON block (set fields to null if unspecified or unclear). If they did not perform any of these actions, return a plain text message starting with \"no_action_detected: \" explaining that no movement or identify action was detected.\n\n"
+        "You are an action-detection assistant. Check if the player's action indicates the general idea or intent of any of the actions below (it does not need to match the exact wording). If they did, output ONLY the corresponding JSON block (set fields to null if unspecified or unclear). If they did not perform any of these actions, return a plain text message starting with \"no_action_detected: \" explaining that no movement, identify, or door usage action was detected.\n\n"
         "Available Actions & JSON Syntax:\n"
         "1. Movement (player.move = true):\n"
         "{\n"
@@ -72,6 +73,11 @@ def process_user_action(
         "{\n"
         '  "player.identify": true,\n'
         '  "identify.target": string or null (ONLY if it matches a subject from the list below, otherwise null)\n'
+        "}\n\n"
+        "3. Use/Open Door (player.door_use = true):\n"
+        "{\n"
+        '  "player.door_use": true,\n'
+        '  "door.target": string or null (ONLY if it matches a subject from the list below, otherwise null)\n'
         "}\n\n"
         "Available Subjects in the current scene:\n"
         f"{subjects_context}\n"
@@ -122,6 +128,16 @@ def process_user_action(
                                 break
                         parsed["identify.target"] = matched
 
+                    # Validate and normalize/nullify door.target
+                    if "door.target" in parsed and parsed["door.target"] is not None:
+                        tgt = str(parsed["door.target"]).strip().lower()
+                        matched = None
+                        for ks in known_subjects:
+                            if ks.lower() == tgt:
+                                matched = ks
+                                break
+                        parsed["door.target"] = matched
+
                     clean_text = json.dumps(parsed, indent=2)
             except Exception as e:
                 logger.warning(f"Could not parse/validate action JSON: {e}")
@@ -135,7 +151,9 @@ def process_user_action(
             "towards.subject": None,
             "move.distance_inches": None,
             "player.identify": False,
-            "identify.target": None
+            "identify.target": None,
+            "player.door_use": False,
+            "door.target": None
         }, indent=2)
     finally:
         clear_stage_progress(world_id)

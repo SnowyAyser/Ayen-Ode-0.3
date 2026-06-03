@@ -128,6 +128,25 @@ class TestUserAction(unittest.TestCase):
         )
         self.assertIn('"identify.target": "wooden chest"', response2)
 
+    @patch("ayen_ode.narrative.stages.utils.set_stage_progress")
+    @patch("ayen_ode.narrative.stages.utils.clear_stage_progress")
+    def test_process_user_action_door_use_action(self, mock_clear, mock_set):
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(type="text", text='{"player.door_use": true, "door.target": "door"}')]
+        self.mock_client.messages.create.return_value = mock_response
+
+        response, updated_history, _, _, _ = process_user_action(
+            client=self.mock_client,
+            service=self.mock_service,
+            world_id=self.world_id,
+            user_action="I try to open the door",
+            conversation_history=self.history
+        )
+
+        self.assertIn('"player.door_use": true', response)
+        self.assertIn('"door.target": "door"', response)
+        self.assertEqual(len(updated_history), len(self.history) + 1)
+
 
 if __name__ == "__main__":
     unittest.main()

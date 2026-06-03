@@ -409,6 +409,46 @@ async function executeNarrativeSubmit(actionText, isClarificationSubmit = false)
       }
     }
 
+    if (isJson && jsonPayload && jsonPayload["player.door_use"] === true) {
+      const targetName = jsonPayload["door.target"] || "door";
+      const resolvedTarget = resolveSubjectName(targetName);
+      const targetPos = getSubjectCoord(resolvedTarget);
+      const dx = targetPos.x - playerPos.x;
+      const dy = targetPos.y - playerPos.y;
+      const distInches = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distInches > 36) {
+        if (activeStageInterval) clearInterval(activeStageInterval);
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Act';
+        if (lastUserBlockNode) {
+          lastUserBlockNode.remove();
+          lastUserBlockNode = null;
+        }
+        const inputEl = document.getElementById("actionInput");
+        inputEl.value = actionText;
+        autoResizeTextarea(inputEl);
+        updateCharCount(inputEl);
+        inputEl.focus();
+        const errBanner = document.getElementById("noMovementError");
+        const errText = document.getElementById("noMovementErrorText");
+        if (errBanner && errText) {
+          const distFt = (distInches / 12).toFixed(1);
+          const prettyTarget = resolvedTarget.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+          errText.textContent = `You are too far away to use the ${prettyTarget}. You must be within 3 feet (currently ${distFt} ft away).`;
+          errBanner.classList.remove("hidden");
+        }
+        return;
+      }
+      
+      jsonPayload["door.within_range"] = true;
+      narrativeResponse = JSON.stringify(jsonPayload, null, 2);
+      
+      if (data.history && data.history.length > 0 && data.history[data.history.length - 1].role === "assistant") {
+        data.history[data.history.length - 1].content = narrativeResponse;
+      }
+    }
+
     if (isJson && jsonPayload && jsonPayload["player.identify"] === true) {
       const targetName = jsonPayload["identify.target"];
       if (!targetName) {
@@ -782,7 +822,8 @@ const defaultEntities = [
   { name: "old man", type: "character" },
   { name: "paladin guard", type: "character" },
   { name: "wooden chest", type: "object" },
-  { name: "stone archway", type: "location" }
+  { name: "stone archway", type: "location" },
+  { name: "door", type: "object" }
 ];
 
 function resolveSubjectName(name) {
@@ -798,7 +839,8 @@ function resolveSubjectName(name) {
     { name: "old man", type: "character" },
     { name: "paladin guard", type: "character" },
     { name: "wooden chest", type: "object" },
-    { name: "stone archway", type: "location" }
+    { name: "stone archway", type: "location" },
+    { name: "door", type: "object" }
   ];
   
   defaults.forEach(d => {
@@ -827,6 +869,7 @@ function getSubjectCoord(name) {
   const resolved = resolveSubjectName(name);
   if (resolved === "self") return playerPos;
   if (resolved === "old man") return { x: 60, y: 60 };
+  if (resolved === "door" || resolved.includes("door")) return { x: -120, y: 0 };
   
   // Simple hash function to generate reproducible coordinates for dynamic entities
   let hash = 0;
@@ -839,10 +882,12 @@ function getSubjectCoord(name) {
   // Keep all dynamic subjects strictly inside the 20ft viewport: 3.5ft (42 inches) to 15ft (180 inches)
   const dist = 42 + (Math.abs(hash >> 8) % 138);
   
-  return {
-    x: Math.round(dist * Math.cos(angle)),
-    y: Math.round(dist * Math.sin(angle))
-  };
+  let ex = Math.round(dist * Math.cos(angle));
+  let ey = Math.round(dist * Math.sin(angle));
+  // Clamp inside the 20x20ft room with a 15-inch margin so they don't sit on the walls
+  ex = Math.max(-105, Math.min(105, ex));
+  ey = Math.max(-105, Math.min(105, ey));
+  return { x: ex, y: ey };
 }
 
 function initMapPositions() {
@@ -967,22 +1012,49 @@ function drawMap() {
   ctx.fillStyle = "#020617"; // slate-950
   ctx.fillRect(0, 0, width, height);
   
-  // Draw grid background
+  // Draw grid background (5ft squares = 60 inches) aligned to world coordinates
   ctx.strokeStyle = "#1e293b"; // slate-800
   ctx.lineWidth = 0.5;
-  const gridSpacing = 20;
-  for (let x = 0; x < width; x += gridSpacing) {
+  const gridSpacingInches = 60; // 5 feet
+  const startGridX = Math.floor(minVisibleX / gridSpacingInches) * gridSpacingInches;
+  const endGridX = Math.ceil(maxVisibleX / gridSpacingInches) * gridSpacingInches;
+  const startGridY = Math.floor(minVisibleY / gridSpacingInches) * gridSpacingInches;
+  const endGridY = Math.ceil(maxVisibleY / gridSpacingInches) * gridSpacingInches;
+
+  for (let gx = startGridX; gx <= endGridX; gx += gridSpacingInches) {
+    const canvasX = width / 2 + (gx - viewCenterX) * scale;
     ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, height);
+    ctx.moveTo(canvasX, 0);
+    ctx.lineTo(canvasX, height);
     ctx.stroke();
   }
-  for (let y = 0; y < height; y += gridSpacing) {
+  for (let gy = startGridY; gy <= endGridY; gy += gridSpacingInches) {
+    const canvasY = height / 2 - (gy - viewCenterY) * scale;
     ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(width, y);
+    ctx.moveTo(0, canvasY);
+    ctx.lineTo(width, canvasY);
     ctx.stroke();
   }
+
+  // Draw the 20x20 ft room border
+  const roomBottomLeft = toCanvas({ x: -120, y: -120 });
+  const roomTopRight = toCanvas({ x: 120, y: 120 });
+  ctx.strokeStyle = "#334155"; // slate-700 for wall base
+  ctx.lineWidth = 5;
+  ctx.strokeRect(
+    roomBottomLeft.x,
+    roomTopRight.y,
+    roomTopRight.x - roomBottomLeft.x,
+    roomBottomLeft.y - roomTopRight.y
+  );
+  ctx.strokeStyle = "#64748b"; // slate-500 inner thin line
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(
+    roomBottomLeft.x,
+    roomTopRight.y,
+    roomTopRight.x - roomBottomLeft.x,
+    roomBottomLeft.y - roomTopRight.y
+  );
   
   // Draw step crosshairs and coordinates every 10 feet (120 inches)
   ctx.fillStyle = "rgba(148, 163, 184, 0.4)";
@@ -1042,6 +1114,58 @@ function drawMap() {
     
     const isFocused = e.name.toLowerCase() === lastTargetSubject.toLowerCase();
     const isHovered = hoveredSubject && e.name.toLowerCase() === hoveredSubject.toLowerCase();
+    
+    if (e.name.toLowerCase() === "door") {
+      const doorTop = toCanvas({ x: -120, y: 18 });
+      const doorBottom = toCanvas({ x: -120, y: -18 });
+      
+      // Draw door rect
+      ctx.fillStyle = "#b45309"; // amber-700
+      ctx.shadowColor = "#f59e0b";
+      ctx.shadowBlur = isHovered ? 12 : 6;
+      ctx.fillRect(
+        canvasPos.x - 3,
+        doorTop.y,
+        6,
+        doorBottom.y - doorTop.y
+      );
+      ctx.shadowBlur = 0;
+      
+      // Draw door frame outline
+      ctx.strokeStyle = isHovered || isFocused ? "#ffffff" : "#f59e0b";
+      ctx.lineWidth = isHovered ? 2 : 1.5;
+      ctx.strokeRect(
+        canvasPos.x - 3,
+        doorTop.y,
+        6,
+        doorBottom.y - doorTop.y
+      );
+
+      // Label text
+      const labelText = "Door Module";
+      if (isFocused) {
+        ctx.fillStyle = "#f59e0b";
+        ctx.font = "bold 9px sans-serif";
+      } else if (isHovered) {
+        ctx.fillStyle = "#f8fafc";
+        ctx.font = "bold 9px sans-serif";
+      } else {
+        ctx.fillStyle = "#94a3b8";
+        ctx.font = "9px sans-serif";
+      }
+      ctx.fillText(labelText, canvasPos.x + 8, canvasPos.y + 3);
+      
+      if (isHovered) {
+        const textWidth = ctx.measureText(labelText).width;
+        ctx.strokeStyle = ctx.fillStyle;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(canvasPos.x + 8, canvasPos.y + 5);
+        ctx.lineTo(canvasPos.x + 8 + textWidth, canvasPos.y + 5);
+        ctx.stroke();
+      }
+      return;
+    }
     
     // Choose marker color by type
     let color = "#a855f7"; // purple-500 for locations
@@ -1181,6 +1305,10 @@ function updatePlayerLocationFromPayload(payload) {
     }
   }
   
+  // Clamp inside the 20x20 ft room ([-120, 120])
+  playerPos.x = Math.max(-120, Math.min(120, playerPos.x));
+  playerPos.y = Math.max(-120, Math.min(120, playerPos.y));
+  
   saveMapPositions();
   drawMap();
 }
@@ -1215,15 +1343,27 @@ window.addEventListener("resize", drawMap);
       const coords = getSubjectCoord(s.name);
       const canvasPos = params.toCanvas(coords);
       
-      // 1. Circle check (radius 15)
-      const dist = Math.sqrt((clickX - canvasPos.x) ** 2 + (clickY - canvasPos.y) ** 2);
-      if (dist <= 15) {
-        found = s.name;
-        break;
+      // 1. Circle/Geometry check
+      if (s.name.toLowerCase() === "door") {
+        const doorTopY = canvasPos.y - 18 * params.scale;
+        const doorBottomY = canvasPos.y + 18 * params.scale;
+        if (Math.abs(clickX - canvasPos.x) <= 6 && clickY >= doorTopY && clickY <= doorBottomY) {
+          found = s.name;
+          break;
+        }
+      } else {
+        const dist = Math.sqrt((clickX - canvasPos.x) ** 2 + (clickY - canvasPos.y) ** 2);
+        if (dist <= 15) {
+          found = s.name;
+          break;
+        }
       }
       
       // 2. Text label check and capitalize name
-      const labelText = s.name.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+      let labelText = s.name.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+      if (s.name.toLowerCase() === "door") {
+        labelText = "Door Module";
+      }
       const textWidth = ctx.measureText(labelText).width;
       const textLeft = canvasPos.x + 7;
       const textRight = textLeft + textWidth;
