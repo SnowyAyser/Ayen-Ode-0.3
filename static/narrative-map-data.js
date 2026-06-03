@@ -106,6 +106,7 @@ function getMapViewParams() {
   const rect = canvas.getBoundingClientRect();
   const width = rect.width;
   const height = rect.height;
+  if (width < 50 || height < 50) return null;
   
   const entitiesToDraw = [...(typeof currentEntities !== "undefined" ? currentEntities : [])];
   defaultEntities.forEach(d => {
