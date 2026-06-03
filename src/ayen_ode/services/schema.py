@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS investigation_jobs (
     status TEXT NOT NULL DEFAULT 'queued',
     cost INTEGER NOT NULL DEFAULT 1,
     context TEXT,
+    priority INTEGER NOT NULL DEFAULT 1,
     entity_id TEXT REFERENCES entities(entity_id) ON DELETE SET NULL,
     result_json TEXT,
     created_at TEXT NOT NULL,
@@ -297,6 +298,8 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE investigation_jobs ADD COLUMN cost INTEGER NOT NULL DEFAULT 1")
     if "context" not in job_cols:
         conn.execute("ALTER TABLE investigation_jobs ADD COLUMN context TEXT")
+    if "priority" not in job_cols:
+        conn.execute("ALTER TABLE investigation_jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 1")
 
     conn.execute(
         """

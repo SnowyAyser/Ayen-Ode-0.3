@@ -88,26 +88,16 @@ def make_auth_routes(service: Any, settings: Any, sessions: Any) -> list:
         return JSONResponse({"ok": True})
 
     async def settings_status_handler(_: Any) -> JSONResponse:
-        # Re-read .env directly so the answer reflects the current file, not the
-        # snapshot loaded at server start. Used by the dashboard banner.
-        env_path = paths.env_path()
-        api_key = ""
-        if env_path.exists():
-            try:
-                for line in env_path.read_text(encoding="utf-8").splitlines():
-                    s = line.strip()
-                    if s.startswith("ANTHROPIC_API_KEY="):
-                        api_key = s.split("=", 1)[1].strip()
-                        break
-            except OSError:
-                pass
-        if not api_key:
-            api_key = os.getenv("ANTHROPIC_API_KEY", "")
-        configured = bool(api_key) and api_key != "sk-ant-..."
+        key = settings.openrouter_api_key or (settings.anthropic_api_key if settings.anthropic_api_key.startswith("sk-or-") else "")
+        configured = bool(key) and key != "sk-or-..."
         return JSONResponse({
             "api_key_configured": configured,
-            "stale": configured and api_key != settings.anthropic_api_key,
+            "stale": False,
         })
+
+    async def local_ai_status_handler(_: Any) -> JSONResponse:
+        from ..local_ai import get_local_ai_status
+        return JSONResponse(get_local_ai_status())
 
     # Settings live inside the dashboard now (see static/dashboard.html).
     # The old subprocess-Tk path is gone; settings_window.py is kept only for
@@ -118,6 +108,7 @@ def make_auth_routes(service: Any, settings: Any, sessions: Any) -> list:
     # Anything else in a POST body is dropped on the floor.
     _EDITABLE_KEYS = (
         "ANTHROPIC_API_KEY",
+        "OPENROUTER_API_KEY",
         "APP_USERNAME",
         "APP_PASSWORD",
         "ALLOWED_IPS",
@@ -136,7 +127,7 @@ def make_auth_routes(service: Any, settings: Any, sessions: Any) -> list:
         return out
 
     def _mask(value: str) -> str:
-        if not value or value == "sk-ant-...":
+        if not value or value in ("sk-ant-...", "sk-or-..."):
             return ""
         if len(value) <= 8:
             return "•" * len(value)
@@ -158,10 +149,17 @@ def make_auth_routes(service: Any, settings: Any, sessions: Any) -> list:
                 pass
         api_key = values.get("ANTHROPIC_API_KEY", "")
         api_key_set = bool(api_key) and api_key != "sk-ant-..."
+        
+        openrouter_key = values.get("OPENROUTER_API_KEY", "")
+        openrouter_key_set = bool(openrouter_key) and openrouter_key != "sk-or-..."
+        
         return JSONResponse({
             "anthropic_api_key_masked": _mask(api_key) if api_key_set else "",
             "anthropic_api_key_set": api_key_set,
             "anthropic_api_key_stale": api_key_set and api_key != settings.anthropic_api_key,
+            "openrouter_api_key_masked": _mask(openrouter_key) if openrouter_key_set else "",
+            "openrouter_api_key_set": openrouter_key_set,
+            "openrouter_api_key_stale": openrouter_key_set and openrouter_key != getattr(settings, "openrouter_api_key", ""),
             "app_username": values.get("APP_USERNAME", ""),
             "app_password_set": bool(values.get("APP_PASSWORD", "")),
             "allowed_ips": values.get("ALLOWED_IPS", ""),
@@ -225,9 +223,40 @@ def make_auth_routes(service: Any, settings: Any, sessions: Any) -> list:
 
         def _delayed_exit() -> None:
             time.sleep(0.4)
-            # Exit code 42 signals the desktop launcher (if running) to relaunch.
-            # In source mode start.bat loops on exit-code 0; we use 42 for explicit restart.
-            os._exit(42 if paths.is_frozen() else 0)
+            try:
+                import sys
+                import subprocess
+                from ayen_ode import paths
+                
+                # Determine the relaunch command based on run mode
+                if paths.is_frozen():
+                    exe = sys.executable
+                    subprocess.Popen(
+                        [exe],
+                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS if sys.platform == "win32" else 0
+                    )
+                else:
+                    python_exe = sys.executable
+                    cmd = [python_exe, "-m", "ayen_ode.desktop_launcher"]
+                    cwd = str(paths.user_data_dir())
+                    
+                    if sys.platform == "win32":
+                        subprocess.Popen(
+                            cmd,
+                            cwd=cwd,
+                            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
+                            close_fds=True
+                        )
+                    else:
+                        subprocess.Popen(
+                            cmd,
+                            cwd=cwd,
+                            preexec_fn=os.setpgrp if hasattr(os, "setpgrp") else None,
+                            close_fds=True
+                        )
+            except Exception:
+                pass
+            os._exit(0)
 
         threading.Thread(target=_delayed_exit, daemon=True).start()
         return JSONResponse({"ok": True})
@@ -295,6 +324,7 @@ def make_auth_routes(service: Any, settings: Any, sessions: Any) -> list:
         Route("/api/login", login_handler, methods=["POST"]),
         Route("/api/logout", logout_handler, methods=["POST"]),
         Route("/api/settings/status", settings_status_handler, methods=["GET"]),
+        Route("/api/local-ai/status", local_ai_status_handler, methods=["GET"]),
         Route("/api/settings", settings_get_handler, methods=["GET"]),
         Route("/api/settings", settings_post_handler, methods=["POST"]),
         Route("/api/restart", restart_handler, methods=["POST"]),

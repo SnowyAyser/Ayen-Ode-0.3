@@ -181,6 +181,7 @@ class InvestigationMixin:
         cost: int = 1,
         context: str | None = None,
         world: str | None = None,
+        priority: int = 1,
     ) -> dict[str, Any]:
         """Create an async investigation job."""
         now = utc_now()
@@ -190,10 +191,10 @@ class InvestigationMixin:
             conn.execute(
                 """
                 INSERT INTO investigation_jobs
-                (job_id, world_id, entity_name, entity_type, status, cost, context, created_at)
-                VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)
+                (job_id, world_id, entity_name, entity_type, status, cost, context, priority, created_at)
+                VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)
                 """,
-                (job_id, row["world_id"], entity_name.strip(), entity_type.strip(), cost, context, now),
+                (job_id, row["world_id"], entity_name.strip(), entity_type.strip(), cost, context, priority, now),
             )
             return {
                 "job_id": job_id,
@@ -203,6 +204,7 @@ class InvestigationMixin:
                 "status": "queued",
                 "cost": cost,
                 "context": context,
+                "priority": priority,
                 "created_at": now,
             }
 
@@ -228,6 +230,7 @@ class InvestigationMixin:
                 "status": job["status"],
                 "cost": dict(job).get("cost", 1),
                 "context": dict(job).get("context"),
+                "priority": dict(job).get("priority", 1),
                 "entity_id": job["entity_id"],
                 "result": result,
                 "created_at": job["created_at"],
@@ -266,7 +269,7 @@ class InvestigationMixin:
         with self.connect() as conn:
             row = self._resolve_world(conn, world) if world else self._require_active_world(conn)
             jobs = conn.execute(
-                "SELECT * FROM investigation_jobs WHERE world_id = ? AND status IN ('queued', 'processing') ORDER BY created_at ASC LIMIT ?",
+                "SELECT * FROM investigation_jobs WHERE world_id = ? AND status IN ('queued', 'processing') ORDER BY priority ASC, created_at ASC LIMIT ?",
                 (row["world_id"], limit),
             ).fetchall()
             return {
@@ -277,8 +280,44 @@ class InvestigationMixin:
                         "entity_name": job["entity_name"],
                         "entity_type": job["entity_type"],
                         "status": job["status"],
+                        "priority": dict(job).get("priority", 1),
                         "created_at": job["created_at"],
                     }
                     for job in jobs
                 ],
             }
+
+    def prioritize_investigation_job(self, job_id: str) -> None:
+        """Set priority of a job to 0 (High Priority)."""
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE investigation_jobs SET priority = 0 WHERE job_id = ? AND status = 'queued'",
+                (job_id,),
+            )
+
+    def prioritize_investigation_job_by_name(self, entity_name: str, world_id: str) -> bool:
+        """Set priority of a queued job matching entity name to 0. Returns True if found and bumped."""
+        clean_name = entity_name.strip()
+        variants = [clean_name.lower()]
+        if clean_name.lower().endswith("s"):
+            if clean_name.lower().endswith("es"):
+                variants.append(clean_name[:-2].lower())
+            variants.append(clean_name[:-1].lower())
+        else:
+            variants.append((clean_name + "s").lower())
+            variants.append((clean_name + "es").lower())
+
+        placeholders = ",".join("?" for _ in variants)
+        with self.connect() as conn:
+            job = conn.execute(
+                f"SELECT job_id FROM investigation_jobs WHERE world_id = ? AND status = 'queued'"
+                f" AND LOWER(entity_name) IN ({placeholders}) LIMIT 1",
+                [world_id] + variants
+            ).fetchone()
+            if job:
+                conn.execute(
+                    "UPDATE investigation_jobs SET priority = 0 WHERE job_id = ?",
+                    (job["job_id"],),
+                )
+                return True
+        return False

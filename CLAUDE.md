@@ -8,318 +8,428 @@
 
 ## What This Project Is
 
-Ayen-Ode is a narrative RPG engine. It manages deterministic game state —
-worlds, entities, hidden stats, a containment tree, and investigation jobs —
-so the AI storyteller can focus on narrative while the server enforces rules
-and consistency. Narration is driven by the Anthropic Claude API.
+Ayen-Ode is a narrative RPG engine. It manages deterministic game state — worlds, entities, hidden stats, a containment tree, investigation jobs, and quest tracking — so an AI narrator can focus on storytelling while the server enforces rules and consistency.
+
+**Narration is driven by local Qwen 2.5:14b via Ollama** (running at `localhost:11434`). The Anthropic API key field in Settings is optional and unused by default; `LocalAIClient` in `local_ai.py` mimics the Anthropic SDK interface but routes calls to Ollama.
 
 - **Backend**: Python 3.11+, Starlette, SQLite (local) or Turso/libSQL (cloud)
-- **Frontend**: Static HTML/JS served by the same process
-- **Deployment**: Render.com (see `render.yaml`)
-- **Version**: 0.3.2
+- **Frontend**: Static HTML/Tailwind CSS/JS served by the Starlette server
+- **Desktop wrapper**: pywebview (Edge WebView2 on Windows) pointing at `http://127.0.0.1:{port}/`
+- **Deployment**: Render.com (see `render.yaml`) — the HTML/JS frontend is the same for both desktop and web
 
 ---
 
-## Read This First
+## Entry Point and Boot Sequence
 
-- **Project location must NOT be inside OneDrive / iCloud / Dropbox / Google Drive.** Sync corrupts `.venv` and SQLite. Use `C:\dev\` or `~/dev/`. The setup script refuses to run inside synced folders.
-- The **database** is the authoritative source for all live game state. By default this is `data/ayen_ode.db` (local SQLite). When `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are set in `.env`, all reads/writes go to Turso instead — the local file is ignored.
-- `world/` contains human-readable lore reference files — these do **not** drive the server.
-- `worlds/` (different!) holds per-world campaign operational files.
-- `server.py` is the HTTP layer. It delegates all logic to `AyenOdeService` from `service.py`.
-- `service.py` is a one-line re-export shim — the real implementation is in `services/`.
-- Always run `pytest tests/` before and after changes to the service layer.
-- The quest system (`world_quests` table, `QuestsMixin`, `quests.py`) tracks layered narrative goals. Tier 1 is generated at world creation; Tier 2/3 are detected every 3 narrative turns by a Haiku scan.
+```
+Play-Ayen-Ode.bat
+  └─ pythonw.exe -m ayen_ode.desktop_launcher
+       │
+       ├─ (background thread) bg_boot_thread()
+       │    ├─ updater.check_and_update()             # EXE builds: compare source hash → spawn update
+       │    ├─ desktop_helpers.check_single_instance() # Windows mutex
+       │    ├─ uvicorn.Server(app).run()               # Starlette on 127.0.0.1:{port}
+       │    └─ sets server_ready = True
+       │
+       ├─ (main thread) SplashApp (tkinter animated splash)
+       │    └─ polls server_ready / server_failed / update_triggered every 100 ms
+       │
+       └─ When server_ready: launch_webview()
+            └─ webview.create_window(url="http://127.0.0.1:{port}/")
+                 → user sees index.html (login) or auto-redirects to /desktop-bootstrap
+```
+
+**Preferred port:** 54224 (fixed if free, otherwise random ephemeral). Written to
+`%APPDATA%/Ayen-Ode/runtime.json`.
+
+**Auto-login flow (desktop):** If the user checked "Auto Login on Startup",
+`index.html` immediately redirects to `/desktop-bootstrap`. That route creates a
+fresh session token server-side, injects it into `localStorage` via an inline
+HTML page, and redirects to `/dashboard.html`. The user never sees the login form.
 
 ---
 
-## Directory Structure
+## Package / Module Map
 
 ```
-Ayen-Ode-0.3/
+src/ayen_ode/
 │
-├── src/ayen_ode/               # Python package — the running server
-│   ├── __init__.py                 # Package version string
-│   ├── __main__.py                 # Entry point: python -m ayen_ode
-│   ├── config.py                   # Settings (env vars) + Anthropic client init; SONNET_MODEL + HAIKU_MODEL constants
-│   ├── server.py                   # App setup: SessionStore, AuthMiddleware, investigation worker, main()
-│   ├── narrative.py                # Claude API driver: world init, action processing, investigation; imports intake + quests
-│   ├── intake.py                   # Post-narration intake pass: _run_intake_pass() + tool schemas (incl. mark_quest_progress)
-│   ├── quests.py                   # Quest goal detection: generate_overarching_goal() + scan_for_goals() — Haiku calls
-│   ├── context_assembler.py        # Thin orchestrator: ContextAssembler(PlayerQueryMixin) — __init__, assemble(), to_prompt_text()
-│   ├── context_scene_queries.py    # SceneQueryMixin: queries 1–4 (scene, actor awareness, recent history, open threads)
-│   ├── context_player_queries.py   # PlayerQueryMixin(SceneQueryMixin): queries 5–9 (player state, histories, journey, bleed-in)
-│   ├── service.py                  # Re-export shim → from .services import AyenOdeService
-│   ├── settings_window.py          # Native tkinter settings UI: edits .env fields (API key, username, password, port)
-│   ├── routes/                     # HTTP route handlers split by domain
-│   │   ├── __init__.py             # make_all_routes() — assembles all route lists from sub-modules
-│   │   ├── auth.py                 # health, static page serves, whoami, login, logout; _client_ip() helper
-│   │   ├── worlds.py               # World CRUD, init, switch, reset, delete, currency handlers
-│   │   ├── entities.py             # Entity CRUD, stats, linking handlers
-│   │   ├── containment.py          # Containment tree, move, hooks, events handlers
-│   │   ├── knowledge.py            # Knowledge graph, hooks, events handlers
-│   │   └── consequence.py          # Consequence, hooks, investigation, narrative action, context-packet handlers
-│       └── quests.py               # Quest routes: GET /quests, POST /promote, /dismiss, /check
-│   ├── narrative_utils.py              # Parsing helpers: parse_investigation_response, sanitize_entity_details
-│   └── services/                   # Domain-split service modules (see Services Layer below)
-│       ├── quests.py               # QuestsMixin: create/read/progress/complete/dismiss world_quests rows
-│       ├── __init__.py             # Assembles AyenOdeService from mixins
-│       ├── base.py                 # BaseService: connect(), initialize(), shared private helpers; imports schema
-│       ├── schema.py               # _SCHEMA_SQL DDL constant + run_migrations(conn) — extracted from base.py
-│       ├── hook_actions.py         # execute_shared_hook_action(): stat_change, log_note, flag_entity branches
-│       ├── worlds.py               # WorldsMixin: world CRUD, handoffs, archive, reset, time tracking
-│       ├── entities.py             # EntitiesMixin: entity CRUD, linking, comparison
-│       ├── stats.py                # StatsMixin: stat reads, apply_stat_change, reconciliation
-│       ├── containment.py          # ContainmentMixin: containment tree, move, hooks, events
-│       ├── knowledge_queries.py    # KnowledgeQueryMixin: all read-only knowledge query methods (JOIN-based, no N+1)
-│       ├── knowledge.py            # KnowledgeMixin(KnowledgeQueryMixin): learn, spread, forget, hooks
-│       ├── consequence_queries.py  # ConsequenceQueryMixin: all read-only consequence query methods
-│       ├── consequence.py          # ConsequenceMixin(ConsequenceQueryMixin): record, hooks, chain traversal
-│       ├── investigation.py        # InvestigationMixin: jobs, state history, points currency
-│       └── sync.py                 # SyncMixin: canon sync log, world summary sync
+│  ── Desktop layer ────────────────────────────────────────────────────────────
+├── desktop_launcher.py        # ← PRIMARY ENTRY POINT (desktop mode)
+│                              #   starts uvicorn + pywebview + splash
+├── splash_app.py              # Animated tkinter loading screen (boot-time only)
+├── desktop_api.py             # pywebview JS bridge:
+│                              #   save_username / get_saved_username
+│                              #   save_auto_login / get_auto_login
+│                              #   get_configured_credentials
+│                              #   close_window, toggle_fullscreen, set_fullscreen
+├── desktop_helpers.py         # Single-instance mutex, set_window_icon, stream redirect
+├── updater.py                 # Self-update: compare source hash, spawn build script
 │
-├── tests/
-│   ├── test_state_service.py       # Unit tests: world switching, stat changes, reconciliation
-│   ├── test_containment.py         # Unit tests: containment tree, move, hooks, circular detection
-│   ├── test_knowledge.py           # Unit tests: knowledge graph, spread, degree, chain, hooks
-│   ├── test_consequence.py         # Unit tests: causal chain, forward/backward traversal, cross-system hooks
-│   └── test_context_assembler.py   # Unit tests: context packet assembly, compression, filtering
+│  ── Orphaned customtkinter UI (NOT used by launcher) ─────────────────────────
+├── desktop_gui.py             # ⚠ SHIM ONLY — re-exports desktop.AyenOdeApp / run()
+├── desktop/                   # ⚠ ORPHANED ctk UI package
+│   ├── app.py                 #   AyenOdeApp root
+│   ├── colors.py              #   Shared colour constants (S950–S100, A950–A100, etc.)
+│   ├── widgets.py             #   Shared widget helpers (_btn, _label, _panel, etc.)
+│   ├── login.py               #   LoginFrame
+│   ├── dashboard.py           #   DashboardFrame
+│   ├── settings.py            #   SettingsDialog (ctk)
+│   ├── create_world.py        #   CreateWorldFrame wizard
+│   ├── narrative_layout.py    #   NarrativeFrame (layout orchestrator)
+│   ├── narrative_view.py      #   NarrativeView (story text + input)
+│   ├── quest_panel.py         #   QuestPanel
+│   ├── compendium_panel.py    #   CompendiumPanel
+│   └── investigation_overlay.py
 │
-├── static/                         # Browser UI files served by the server at /
-│   ├── index.html                  # Login page (API key input)
-│   ├── dashboard.html              # World management dashboard
-│   ├── narrative.html              # In-game narrative play UI (HTML only; JS in narrative*.js files)
-│   ├── narrative.js                # State vars, storage, world load, entity render, form submit, bootstrap
-│   ├── narrative-investigation.js  # Investigation panel, polling, queue, timer, points display
-│   ├── narrative-entity.js         # Entity detail panel, compendium list, entity link detection
-│   ├── narrative-worlds.js         # World switcher modal
-│   ├── narrative-quests.js         # Quest panel: load, render, promote/dismiss threads, check progress
-│   ├── debug.html                  # Dev debug panel HTML shell (JS in debug*.js files)
-│   ├── debug.js                    # State, api wrapper, badge helpers, tab switcher, polling, live feed, init
-│   ├── debug-panels.js             # Entity inspector, containment tree, knowledge table, consequence list renderers
-│   ├── app.js                      # Shared auth + API fetch wrapper (loaded first on every page)
-│   ├── clover-loader.html          # Animated loading screen (standalone page)
-│   └── clover-loader.js            # Clover trail animation script
+│  ── Config & AI ──────────────────────────────────────────────────────────────
+├── config.py                  # load_settings() → Settings dataclass
+│                              #   SONNET_MODEL = HAIKU_MODEL = "qwen2.5:14b"
+│                              #   client = LocalAIClient(api_key=...)
+├── local_ai.py                # Ollama adapter: MessagesAdapter.create() mimics
+│                              #   anthropic.messages.create(); auto-starts Ollama;
+│                              #   auto-pulls qwen2.5:14b if not installed
+├── paths.py                   # Resolves AppData dir, db path, static dir, .env path;
+│                              #   is_frozen() detects PyInstaller bundle
+├── settings_window.py         # Plain-tkinter settings UI — kept for devs
+│                              #   (python -m ayen_ode.settings_window).
+│                              #   write_env() is reused by routes/auth.py.
+│                              #   NOT invoked by the launcher.
 │
-├── world/                          # Human-readable lore content (NOT live state)
-│   ├── README.md                   # Explains world/ vs worlds/ distinction
-│   ├── stat-framework.md           # Stat model definitions (6 stats per entity type, 0–100)
-│   ├── stat-ledger.md              # Human-readable stat change snapshot
-│   ├── reference-map.md            # Entity relationship reference map
-│   ├── story-framework.md          # Active campaign control sheet
-│   ├── characters/                 # Character reference files
-│   ├── factions/                   # Faction reference files
-│   ├── locations/                  # Location reference files
-│   ├── objects/                    # Object reference files
-│   └── events/                     # Event reference files
+│  ── Server ────────────────────────────────────────────────────────────────────
+├── server.py                  # Starlette app assembly: routes, middleware (Auth,
+│                              #   CacheControl, CORS), SessionStore; starts
+│                              #   investigation_worker + check_and_pull_qwen_model threads
+├── service.py                 # Re-export shim → from .services import AyenOdeService
+├── worker.py                  # Background investigation job processor:
+│                              #   pregenerated_investigations cache first, then Qwen fallback;
+│                              #   priority queue; 60s pacing (waivable for dev user)
 │
-├── worlds/                         # Per-world operational files (one folder per world slug)
-│   └── README.md                   # Conventions for world folders
+│  ── Narrative ─────────────────────────────────────────────────────────────────
+├── narrative/
+│   ├── __init__.py            # Exports: initialize_world, process_user_action,
+│   │                          #   investigate_entity
+│   ├── init_world.py          # Generate opening scene for a new world
+│   ├── user_action.py         # process_user_action() → narration string
+│   ├── investigator.py        # investigate_entity() → entity data + narrative
+│   └── stages/
+│       ├── prose.py           # Narration generation stage
+│       ├── mechanics.py       # Mechanics extraction stage
+│       ├── quests.py          # Quest update stage
+│       ├── theme.py           # Theme consistency stage
+│       └── utils.py           # Shared stage helpers
+├── intake.py                  # Post-narration pass (Qwen): extracts state changes —
+│                              #   consequences, knowledge, moves, time advancement
+├── quests.py                  # Quest goal detection: scan_for_goals(),
+│                              #   generate_overarching_goal()
 │
-├── docs/                           # Technical documentation
-│   ├── DATA_MODEL.md               # Database schema reference (13 tables)
-│   ├── ACTIONS.md                  # Endpoint/action reference
-│   └── DEPLOYMENT.md               # Render.com deployment guide
+│  ── Context assembly ──────────────────────────────────────────────────────────
+├── context_assembler.py       # ContextAssembler: 9-query world-state packet assembled
+│                              #   before each narrative call
+├── context_scene_queries.py   # Queries 1–4: scene, actor awareness, history, threads
+├── context_player_queries.py  # Queries 5–9: player state, entity histories, journey
+├── narrative_utils.py         # parse_investigation_response, sanitize_entity_details
 │
-├── data/                           # SQLite database files (gitignored)
-│   └── ayen_ode.db                 # Live game state
+│  ── Relinker ──────────────────────────────────────────────────────────────────
+├── relinker/                  # Auto-link <investigate> tags in stored narration text
+│   ├── __init__.py            # Exports: relink_text_*, auto_pre_generate_*, etc.
+│   ├── parser.py              # Detect / rewrite investigate tags programmatically
+│   ├── pregenerator.py        # Queue + execute background pre-generation
+│   ├── db_relinker.py         # Batch-relink stored narration rows in the DB
+│   └── history_relinker.py    # Relink world handoff history logs
 │
-├── examples/
-│   └── local-tool-flow.md          # Example local tool invocation flow
+│  ── Routes ────────────────────────────────────────────────────────────────────
+├── routes/
+│   ├── __init__.py            # make_all_routes() assembles all route lists
+│   ├── auth.py                # health, static page serves, login, logout,
+│   │                          #   /desktop-bootstrap, /api/settings GET/POST,
+│   │                          #   /api/restart, /api/local-ai/status,
+│   │                          #   /api/settings/status, frontend error log
+│   ├── worlds.py              # World CRUD, create-and-init, switch, reset, delete,
+│   │                          #   currency handlers
+│   ├── entities.py            # Entity CRUD, stats, linking
+│   ├── containment.py         # Containment tree, move, hooks, events
+│   ├── knowledge.py           # Knowledge graph, hooks, events
+│   ├── consequence.py         # Consequence records, hooks, context-packet,
+│   │                          #   narrative action endpoint
+│   ├── consequence_handlers.py # Split consequence handler logic
+│   ├── consequence_narrative.py # Narrative-specific consequence routes
+│   ├── quests.py              # Quest routes: list, promote, dismiss, check
+│   └── arch.py                # Architecture / admin routes
 │
-├── world-registry.md               # Human-readable world registry (server is authoritative)
-├── .env.example                    # Template for required environment variables
-├── pyproject.toml                  # Package config, dependencies, pytest config
-├── render.yaml                     # Render.com deployment descriptor
-├── README.md                       # Quickstart + troubleshooting
-└── scripts/                        # setup.ps1 (Windows) + setup.sh (POSIX)
+│  ── Services ──────────────────────────────────────────────────────────────────
+└── services/
+    ├── __init__.py            # Assembles AyenOdeService from all mixins
+    ├── base.py                # BaseService: connect(), initialize(), shared helpers
+    ├── schema.py              # _SCHEMA_SQL DDL + run_migrations(conn)
+    ├── db_conn.py             # make_db_connection() — SQLite or Turso
+    ├── worlds.py              # WorldsMixin
+    ├── entities.py            # EntitiesMixin
+    ├── stats.py               # StatsMixin
+    ├── containment.py         # ContainmentMixin
+    ├── knowledge_queries.py   # KnowledgeQueryMixin (read-only)
+    ├── knowledge.py           # KnowledgeMixin
+    ├── consequence_queries.py # ConsequenceQueryMixin (read-only)
+    ├── consequence.py         # ConsequenceMixin
+    ├── investigation.py       # InvestigationMixin
+    ├── quests.py              # QuestsMixin
+    ├── sync.py                # SyncMixin
+    ├── hook_actions.py        # execute_shared_hook_action()
+    └── arch.py                # Architecture mixin
+
+static/
+├── index.html                 # Login page — auto-login, pywebview bridge polling,
+│                              #   credential auto-fill, clover animation
+├── dashboard.html             # World dashboard — world list, forge CTA, settings modal,
+│                              #   local-AI download progress panel
+├── create-world.html          # 4-step world creation wizard (name→tone→premise→role)
+│                              #   animated step transitions, starfield background
+├── narrative.html             # In-game narrative shell (JS split into modules below)
+├── narrative-core.js          # Core state, world load, entity render, bootstrap
+├── narrative-actions.js       # Form submit, send action, streaming
+├── narrative-dom.js           # DOM helpers and rendering utilities
+├── narrative-investigation.js # Investigation panel (combined legacy file)
+├── narrative-investigation-api.js  # Investigation API call wrappers
+├── narrative-investigation-ui.js   # Investigation UI rendering
+├── narrative-settings.js      # Settings popover + skip-time picker for narrative page
+├── narrative-entity.js        # Entity detail panel, compendium list, entity link detection
+├── narrative-worlds.js        # World switcher modal
+├── narrative-quests.js        # Quest panel: load, render, promote/dismiss threads
+├── app.js                     # Shared: checkAuth(), apiCall(), setToken(), getToken()
+├── clover-loader.js           # CloverLoader.createLoader() — clover trail animation
+├── debug.html / debug.js / debug-panels.js / debug-intake.js  # Dev debug panel
+└── clover-loader.html         # Standalone loading page
 ```
 
 ---
 
-## Services Layer
+## Data Model
 
-`AyenOdeService` is assembled from mixin classes. Each mixin handles one domain.
-All private helpers (`_resolve_world`, `_entity_stats`, `connect()`, etc.) live in `BaseService`
-and are accessible on `self` throughout all mixins via Python's MRO.
+### Storage locations
 
-| Domain | File | Key Public Methods |
-|--------|------|--------------------|
-| Worlds | `services/worlds.py` | `list_worlds`, `create_world`, `switch_world`, `archive_world`, `delete_world`, `reset_world`, `save_world_handoff`, `get_world_handoff`, `get_world_time`, `advance_world_time` |
-| Entities | `services/entities.py` | `list_entities`, `get_entity`, `create_entity`, `update_entity`, `link_entities`, `compare_entities` |
-| Stats | `services/stats.py` | `get_entity_stats`, `apply_stat_change`, `reconcile_linked_stats` |
-| Containment | `services/containment.py` | `get_contents`, `get_contents_recursive`, `get_container_chain`, `get_siblings`, `move`, `register_containment_hook`, `list_containment_hooks`, `remove_containment_hook`, `get_containment_events` |
-| Knowledge Queries | `services/knowledge_queries.py` | `get_knowledge`, `get_known_by`, `get_shared_knowledge`, `get_knowledge_by_degree`, `get_all_knowledge_links`, `get_knowledge_chain` — read-only; all JOIN-based (no N+1) |
-| Knowledge | `services/knowledge.py` | `learn`, `spread`, `forget`, `update_degree`, `register_knowledge_hook`, `list_knowledge_hooks`, `remove_knowledge_hook`, `get_knowledge_events` — `KnowledgeMixin(KnowledgeQueryMixin)` |
-| Consequence Queries | `services/consequence_queries.py` | `get_effects`, `get_causes`, `get_chain_forward`, `get_chain_backward`, `get_history`, `get_state_at`, `get_consequence_events`, `get_unresolved_threads` — read-only |
-| Consequence | `services/consequence.py` | `record_consequence`, `record_chain`, `register_consequence_hook`, `list_consequence_hooks`, `remove_consequence_hook` — `ConsequenceMixin(ConsequenceQueryMixin)` |
-| Investigation | `services/investigation.py` | `initialize_world_currency`, `get_investigation_balance`, `spend_investigation_points`, `create_investigation_job`, `complete_investigation_job`, `get_investigation_queue` |
-| Sync | `services/sync.py` | `sync_canon_record`, `sync_world_summary` |
-| Quests | `services/quests.py` | `create_quest`, `get_quest`, `list_quests`, `mark_quest_tag`, `complete_quest`, `dismiss_quest`, `promote_quest`, `check_quest_progress`, `get_active_quests_summary`, `increment_world_turn_count` |
-| Base | `services/base.py` | `__init__`, `connect()`, `initialize()`, `_resolve_world`, `_resolve_entity`, `_entity_stats`, `_world_dict`, `_entity_dict`, `_normalize_stats` |
-| Schema | `services/schema.py` | `_SCHEMA_SQL` (DDL constant), `run_migrations(conn)` — imported by `base.py`; not part of public API |
-| Hook Actions | `services/hook_actions.py` | `execute_shared_hook_action(conn, world_id, hook, default_entity_id, service)` — shared executor for `stat_change`, `log_note`, `flag_entity` hook action types |
+| What | Where |
+|------|-------|
+| Database | `%APPDATA%/Ayen-Ode/data/ayen_ode.db` (desktop / frozen)<br>`<repo>/data/ayen_ode.db` (source mode) |
+| Settings / API key | `%APPDATA%/Ayen-Ode/.env` |
+| Auto-login flag | `%APPDATA%/Ayen-Ode/auto_login.txt` + `localStorage.autoLogin` |
+| Saved username | `%APPDATA%/Ayen-Ode/saved_username.txt` + `localStorage.savedUsername` |
+| Session tokens | `sessions` table in SQLite |
+| Runtime port | `%APPDATA%/Ayen-Ode/runtime.json` |
+| Boot/error log | `%APPDATA%/Ayen-Ode/boot.log` (cleared each launch) |
+| App log | `%APPDATA%/Ayen-Ode/app.log` + `app.log.1` (rolling) |
+| Cloud DB (opt-in) | Turso — set `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` in `.env` |
+
+### Key DB tables
+
+**`worlds`**
+```
+world_id TEXT PK, slug TEXT UNIQUE, name TEXT, status TEXT,
+premise TEXT, theme_tone TEXT, player_role TEXT,
+current_state_summary TEXT, active_tensions_json TEXT,
+last_system_handoff TEXT, original_opening_scene TEXT,
+game_time_seconds INT, game_time_label TEXT,
+created_at TEXT, updated_at TEXT
+```
+`status` (`active` / `paused` / `archived` / `draft`) is written by the service layer
+but **not shown in the UI**. See §Deliberately Gone.
+
+**`entities`** — characters, locations, factions, objects, events per world.
+`container_id` (nullable FK to `entities`) implements the physical containment tree.
+
+**`investigation_jobs`** — queued/processing/complete/failed jobs.
+`priority INT`, `cost INT`, `result_json TEXT` (entity + narrative + stats).
+
+**`pregenerated_investigations`** — cache keyed on `(world_id, entity_name)`.
+Worker reads this before calling the AI.
+
+**`world_currencies`** — investigation points per world (`current_balance`, `max_balance`).
+
+**Other tables**: `entity_links`, `entity_stats`, `stat_ledger`, `world_handoffs`,
+`investigation_state`, `containment_events/hooks`, `entity_knowledge`,
+`knowledge_events/hooks`, `consequence_records/hooks`, `world_quests`, `sessions`, `sync_log`.
 
 ---
 
-## Key Architecture Facts
+## Main User Flows
 
+### App launch → Dashboard
 ```
-HTTP request
-    │
-    â–¼
-server.py (app setup: SessionStore, AuthMiddleware, worker, main)
-    │  routes assembled by make_all_routes() from routes/ package
-    â–¼
-routes/
-    ├── auth.py        (health, static serves, login/logout, _client_ip)
-    ├── worlds.py      (world CRUD, init, switch, reset)
-    ├── entities.py    (entity CRUD, stats, linking)
-    ├── containment.py (tree, move, hooks, events)
-    ├── knowledge.py   (graph, hooks, events)
-    └── consequence.py (records, hooks, investigate, narrative action, context-packet)
-    │  all import AyenOdeService from service.py
-    â–¼
-service.py (re-export shim)
-    │  from .services import AyenOdeService
-    â–¼
-services/__init__.py (assembles class from mixins)
-    │
-    ├── WorldsMixin        (worlds.py)
-    ├── EntitiesMixin      (entities.py)
-    ├── StatsMixin         (stats.py)
-    ├── ContainmentMixin   (containment.py) â† delegates shared hook actions to hook_actions.py
-    ├── KnowledgeMixin     (knowledge.py)   â† inherits KnowledgeQueryMixin (knowledge_queries.py)
-    ├── ConsequenceMixin   (consequence.py) â† inherits ConsequenceQueryMixin (consequence_queries.py)
-    ├── InvestigationMixin (investigation.py)
-    ├── SyncMixin          (sync.py)
-    └── BaseService        (base.py) ← DB init, helpers; DDL in schema.py
-            │
-            ▼
-        make_db_connection() — returns _TursoConnection (remote) or sqlite3 (local)
-            │
-            ├── Turso (libsql://ayen-ode-zgreiniman.aws-eu-west-1.turso.io)
-            │       when TURSO_DATABASE_URL + TURSO_AUTH_TOKEN are set in .env
-            └── SQLite (data/ayen_ode.db)
-                    fallback when Turso env vars are absent
+Play-Ayen-Ode.bat
+  → splash screen (tkinter) while uvicorn boots on 127.0.0.1:54224
+  → pywebview opens http://127.0.0.1:54224/
+  → index.html
+       if localStorage.autoLogin === 'true': → /desktop-bootstrap
+         → server creates session, injects token in localStorage → /dashboard.html
+       else: show login form
+         → POST /api/login { username, password } → { token } → /dashboard.html
+  → dashboard polls GET /api/local-ai/status every 2s
+       if ollama_running=false or model_installed=false:
+         show blocking download-progress overlay; disable Forge + world buttons
+       when model_installed=true: dismiss overlay, enable buttons
+  → GET /api/worlds → render world cards
 ```
 
-**narrative.py** runs separately — it calls the Claude API (claude-sonnet-4-6) and then calls back
-into `service` to persist entity data. The background investigation worker thread is started in
-`server.py` and also calls `narrative.investigate_entity()`. The worker uses an atomic
-`UPDATE...WHERE...subquery` to claim jobs (no race condition) and sleeps outside the connection block.
+### Forge a new world
+```
+Click "Forge a new world" link (id="forgeWorldLink") → /create-world.html
+  4 animated steps: Name → Tone (preset chips) → Premise → Your Role
+  Final step: POST /api/worlds/create { name, premise, theme_tone, player_role }
+    → service.create_world() inserts row
+    → narrative.initialize_world() calls Qwen → opening scene
+    → navigate to /narrative.html?world_id={id}&fresh=1
+```
 
-**Context assembly**: Before every narrative call in `process_user_action()`, `ContextAssembler`
-(`context_assembler.py`) runs 9 queries in a single DB transaction and returns a structured
-world-state packet. The assembler class inherits `PlayerQueryMixin` (from `context_player_queries.py`)
-which inherits `SceneQueryMixin` (from `context_scene_queries.py`). Queries 1–4 live in
-`SceneQueryMixin`: scene, actor awareness, recent history, open threads. Queries 5–9 live in
-`PlayerQueryMixin`: player state, entity histories, player journey, relationship histories, world bleed-in.
-When `player_entity_id` is None the assembler is skipped and the legacy handoff-based context
-is used as fallback.
+### Enter an existing world
+```
+Dashboard world card → "Enter →" button → enterWorldWithTransition(worldId)
+  → animated overlay: clover spinner + world name floats to centre
+  → ~1.5s later: navigate to /narrative.html?world_id={id}&fresh=1
+```
 
-**Post-narration intake**: After Claude narrates, `_run_intake_pass()` (in `intake.py`) makes a
-second call with `claude-haiku-4-5-20251001` to extract concrete state changes (consequences,
-knowledge, moves, and time advancement) from the narration text and write them to the DB.
-The intake model always calls `advance_time(seconds, label)` to accumulate in-game time.
-Intake failures are always silent.
+### Narrative loop
+```
+narrative.html
+  → GET /api/worlds/{id} + handoff → display opening scene
+  → player types action → Enter (or click Act)
+  → POST /api/narrative { world_id, user_action, player_entity_id, history }
+       server: ContextAssembler.assemble() → 9-query world-state packet
+       narrative.process_user_action() → Qwen → narration string
+       intake._run_intake_pass() → Qwen → writes consequences/knowledge/time to DB
+       returns: { narration, game_time, ... }
+  → <investigate item='X' npc|location|...='Y' cost='N'>display</investigate>
+       rendered as clickable amber underline links
+  → click link: spend N points → POST create investigation_job
+       worker.py claims job (atomic UPDATE…subquery, no race)
+       checks pregenerated_investigations cache → use if present
+       else: narrative.investigate_entity() → Qwen → entity data
+       service.create_entity() → complete job, restore points
+```
 
-**In-game time**: Each world tracks `game_time_seconds` (cumulative, since world creation) and
-`game_time_label` (Claude's human-readable current-time string, e.g. "Late afternoon, Day 3").
-The intake pass advances both after every narrative turn. The narrative response JSON always
-includes `game_time: {seconds, label}`. The client shows the label above the input form.
-`POST /api/worlds/{world_id}/skip-time` advances time manually but blocks if there are active
-investigation jobs or open consequence threads.
+### Settings
+```
+Dashboard header gear icon → openSettingsModal()
+  → GET /api/settings (loopback-only, reads .env, masks secrets)
+  → populate form: API key (write-only), username, password, IPs, port, fullscreen
+  → POST /api/settings { key: value, ... }
+       server: write_env() from settings_window.py → %APPDATA%/Ayen-Ode/.env
+       optional: POST /api/restart → process relaunches with updated config
+```
+The narrative page has a smaller gear in the input bar that opens the same modal
+(via `narrative-settings.js` `settingsBtn` / `settingsPopover`).
 
-**Player entity convention**: The player's entity_id is their username. The client sends
-`player_entity_id` in the `/api/narrative` request body.
+---
 
-**Debug endpoint**: `GET /api/worlds/{world_id}/context-packet` returns the assembled packet
-without triggering an AI call. Useful for inspecting scene state during development.
+## Conventions
 
-**Auth**: All routes except static files require a `Bearer <ANTHROPIC_API_KEY>` token header.
+### Colours (desktop/ package)
+Defined in `desktop/colors.py`. Always import from there — never hardcode hex in
+customtkinter code.
 
-**Stat types**: Each entity type has exactly 6 stats (0–100 integers). See `services/base.py`
-`STAT_NAMES_BY_ENTITY_TYPE` for the full mapping.
+| Range | Semantic use |
+|-------|-------------|
+| S950 → S100 | slate-950 → slate-100 — page bg → primary text |
+| A950 → A100 | amber-950 → amber-100 — invest pill bg → Act btn text |
+| P600 | purple-600 — quest panel accent |
+| RED / GRN | #ef4444 / #22c55e — error / success |
+| TYPE_COLORS dict | entity-type dots: character=blue, location=green, faction=violet, object=orange, event=red |
 
-**Containment model**: Every entity has a nullable `container_id` column on the `entities` table
-pointing to its direct parent entity. Null means root-level. Any entity type can be a container —
-this unifies location ("character is in this room") and inventory ("potion is on this character")
-in one field. Moves are validated for circular containment, logged to `containment_events`, and
-fire hooks from `containment_hooks`. REST endpoints live under
-`/api/worlds/{world_id}/entities/{entity_id}/contents` (and siblings) and
-`/api/worlds/{world_id}/containment/*`.
+The HTML/JS frontend uses Tailwind class names directly; `colors.py` is ctk-only.
 
-**Three relational systems — the complete world state**:
-- **Containment** answers WHERE (physical reality) — `container_id` + `containment_events`
-- **Knowledge** answers WHO KNOWS WHAT (information reality) — `entity_knowledge` + `knowledge_events`
-- **Consequence** answers WHY and WHAT HAPPENED (causal reality) — `consequence_records` + `consequence_hooks`
+### Widget helpers (desktop/ package — `desktop/widgets.py`)
+```python
+_btn(parent, text, cmd, *, w=None, h=32, bg=S800, hbg=S700, fg=S300)
+_label(parent, text, color=S400, size=12, **kw)
+_entry(parent, var, *, w=340, ph="", show="")
+_panel(parent, *, w=None, r=12, **kw)         # card frame: S900 bg, S800 border
+_divider(parent)                               # 1px S800 horizontal rule
+_center(win, w, h)                             # centre a Toplevel on screen
+_bind_click_recursive(widget, handler)         # bind <Button-1> on widget + all children
+_split_investigate(text)                       # parse <investigate ...> spans from narration
+```
 
-The three systems connect through consequence hooks. A `consequence_hook` with `action_type="containment_move"` will automatically update the containment tree when a consequence of type `moved` is recorded. A hook with `action_type="knowledge_learn"` will write to the knowledge graph when a `relationship_changed` consequence fires. All three hook actions run in the same SQLite transaction as the triggering `record_consequence` call.
+### Auth / sessions
+- All API routes except `_PUBLIC_PATHS` require `Authorization: Bearer <token>`.
+- Token lives in `localStorage` as `apiKey`; `app.js` exposes `getToken()` / `setToken()`.
+- `/api/settings` and `/api/restart` are additionally loopback-only (`_is_loopback(ip)`).
 
-**Consequence data model**: `consequence_records` has five fields — `cause_id`, `effect_type`, `target_id`, `detail`, `created_at`. `effect_type` is one of: `created`, `destroyed`, `moved`, `transformed`, `state_changed`, `triggered_event`, `relationship_changed`. `detail` uses the convention `"key: old → new"` (e.g. `"status: alive → dead"`) so that `get_state_at` can reconstruct a per-key state snapshot. REST endpoints live under `/api/worlds/{world_id}/consequences/*` and `/api/worlds/{world_id}/entities/{entity_id}/history` (and `state-at`).
+### AI client
+Use `settings.anthropic_client` (a `LocalAIClient`). Interface:
+`client.messages.create(model, max_tokens, system, messages, tools, tool_choice)`.
+Never instantiate a new client inline; never import `anthropic` directly.
+
+### Model names
+```python
+from .config import SONNET_MODEL, HAIKU_MODEL   # both = "qwen2.5:14b"
+```
+Always import from `config.py`. Never hardcode model strings.
+
+---
+
+## Things Deliberately Gone — Do Not Reintroduce
+
+### 1. Active / inactive world concept in the UI
+
+The `worlds.status` DB column still exists and `WorldsMixin.create_world` still writes it.
+`switch_world` and `get_active_world` still exist on the service.
+
+**The UI does not expose any of this.** There are no "active" / "ACTIVE" badges, no "Set
+Active" or "Switch" buttons, and no prominent featured-active-world section. Every world
+card shows the same actions. Do not add these back. To change which world a player is in,
+navigate directly to `/narrative.html?world_id={id}`.
+
+> **Known residue to clean up:** `dashboard.html:renderWorlds()` still checks
+> `w.status === 'active'` to conditionally render an "active" badge and show
+> "Enter →" vs "Switch". This should be removed — all worlds should show "Enter →".
+> `loadData()` also calls `renderActiveWorld()` which references a `#activeWorldCard`
+> element that no longer exists in the HTML, causing a silent TypeError.
+
+### 2. Anthropic Claude as the AI narrator
+
+All narrative calls go through `LocalAIClient` → Ollama → Qwen 2.5:14b. The
+`ANTHROPIC_API_KEY` setting is optional and unused by the narrator. Do not add
+`anthropic` imports to `narrative/`, `intake.py`, or `quests.py`.
+
+### 3. Customtkinter desktop UI as the primary interface
+
+`desktop_launcher.py` does not call `desktop_gui.run()` or anything in `desktop/`.
+The real UI is the HTML/JS frontend served by Starlette and displayed inside pywebview.
+Do not re-add customtkinter frames to the boot path.
+
+### 4. Subprocess settings window
+
+`/api/settings/launch` (old route that spawned a subprocess to open `settings_window.py`)
+is gone. Settings are handled entirely in the web modal (`settingsModal` in `dashboard.html`
+backed by `GET/POST /api/settings`).
 
 ---
 
 ## Running the Project
 
-One command (idempotent — safe to re-run):
-
 ```powershell
-# Windows
+# Desktop app (normal)
+Play-Ayen-Ode.bat          # or double-click "Play Ayen-Ode.lnk"
+
+# Server only — no desktop window (web/dev mode)
+.venv\Scripts\python.exe -m ayen_ode
+
+# Tests
+.venv\Scripts\python.exe -m pytest tests\
+
+# Standalone settings editor (dev only)
+.venv\Scripts\python.exe -m ayen_ode.settings_window
+
+# One-time setup (idempotent)
 powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
 ```
 
-```bash
-# macOS / Linux / WSL
-./scripts/setup.sh
-```
+**Ollama must be installed and running** for narrative calls to work. The server
+auto-starts Ollama and auto-pulls `qwen2.5:14b` on first boot, but that is a
+~9 GB download. The dashboard shows a full-screen blocking progress panel until
+the model is ready — "Forge a new world" and all world action buttons are disabled
+until `model_installed=true`.
 
-The script: detects Python 3.11+, creates `.venv`, runs `pip install -e .`,
-copies `.env.example` → `.env` and prompts for `ANTHROPIC_API_KEY` on first
-run, creates `data/`, then launches the server on `http://localhost:8000`.
-
-Manual equivalents (if not using the script):
-
-```bash
-python -m venv .venv
-.venv/Scripts/python.exe -m pip install -e .   # Windows; .venv/bin/python on Unix
-cp .env.example .env                            # then edit ANTHROPIC_API_KEY
-.venv/Scripts/python.exe -m ayen_ode            # or `ayen-ode` (console script)
-
-# Tests
-.venv/Scripts/python.exe -m pytest tests/
-
-# Health check
-curl http://localhost:8000/health
-```
-
-Reload watches only `src/ayen_ode/` (not `.venv` or `data/`). Disable
-entirely with `AYEN_ODE_RELOAD=0`.
-
-**Cloud database (Turso):** Add these two lines to `.env` to store all game data in Turso
-instead of a local SQLite file. Once set, any machine with the same `.env` shares the same
-game world.
-
+**Cloud database (optional):** Add to `%APPDATA%/Ayen-Ode/.env` via Settings:
 ```
 TURSO_DATABASE_URL=libsql://your-db.turso.io
 TURSO_AUTH_TOKEN=your-auth-token
 ```
-
-A `test_turso.py` script at the project root can be run to verify the connection works before
-starting the server: `python test_turso.py`
-
----
-
-## Development Workflow
-
-When adding or changing features, follow these steps:
-
-### Before writing code
-- Ask detailed questions about how the feature should look, feel, and behave
-- Ask about edge cases and error scenarios
-- Ask how it connects to existing features
-- Summarize your understanding and wait for confirmation before starting
-
-### During implementation
-- Break work into small named steps; present the step list before starting

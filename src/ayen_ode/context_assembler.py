@@ -104,8 +104,147 @@ class ContextAssembler(PlayerQueryMixin):
         return packet
 
     def to_prompt_text(self, packet: dict[str, Any]) -> str:
-        """Serialize the packet to compact JSON for system prompt injection."""
-        return json.dumps(packet, indent=2, ensure_ascii=False)
+        """Serialize the context packet into clean, compact, human-readable Markdown prose.
+        Completely strips out empty values and structural JSON noise for maximum local AI accuracy.
+        """
+        lines = []
+
+        # 1. Game Time
+        game_time = packet.get("game_time") or {}
+        time_label = game_time.get("label", "")
+        time_secs = game_time.get("seconds", 0)
+        if time_label:
+            lines.append(f"- **Current Game Time**: {time_label} ({time_secs} seconds elapsed)")
+
+        # 2. Scene
+        scene = packet.get("scene") or {}
+        curr_container = scene.get("current_container")
+        if curr_container:
+            lines.append("\n### CURRENT SCENE & SURROUNDINGS:")
+            lines.append(f"- **Location**: {curr_container.get('name')} ({curr_container.get('entity_type', 'location')})")
+            
+            contents = scene.get("contents") or []
+            if contents:
+                lines.append("- **Nearby Elements & Entities**:")
+                for item in contents:
+                    if item:
+                        lines.append(f"  - {item.get('name')} ({item.get('entity_type', 'object')})")
+            
+            adj_containers = scene.get("adjacent_containers") or []
+            if adj_containers:
+                lines.append("- **Adjacent Areas**:")
+                for adj in adj_containers:
+                    c = adj.get("container")
+                    if c:
+                        c_name = c.get("name")
+                        c_type = c.get("entity_type", "location")
+                        lines.append(f"  - {c_name} ({c_type})")
+            
+            chain = scene.get("container_chain") or []
+            if chain:
+                path = " is located within ".join(item.get("name", "") for item in reversed(chain) if item)
+                if path:
+                    lines.append(f"- **Wider Context**: {curr_container.get('name')} is located within {path}.")
+
+        # 3. Player State
+        player = packet.get("player") or {}
+        if player and player.get("name"):
+            lines.append("\n### YOUR STATE & ATTRIBUTES:")
+            lines.append(f"- **Character**: {player.get('name')} ({player.get('entity_type', 'character')})")
+            
+            stats = player.get("stats") or {}
+            if stats:
+                stat_str = ", ".join(f"{k.capitalize()}: {v}" for k, v in stats.items())
+                lines.append(f"- **Stats**: {stat_str}")
+            
+            inventory = player.get("inventory") or []
+            if inventory:
+                inv_items = ", ".join(f"{item.get('name')} ({item.get('entity_type', 'object')})" for item in inventory if item)
+                lines.append(f"- **Held Inventory**: {inv_items}")
+            else:
+                lines.append("- **Held Inventory**: None")
+
+        # 4. Active Debts
+        debts = packet.get("active_debts") or []
+        if debts:
+            lines.append("\n### ACTIVE DEBTS & OBLIGATIONS:")
+            for d in debts:
+                lines.append(f"- {d.get('debtor_name')} owes {d.get('creditor_name')} {d.get('quantity')} {d.get('resource_type')} for: {d.get('detail')}")
+
+        # 5. Actor Awareness
+        awareness = packet.get("actor_awareness") or {}
+        active_awareness = {k: v for k, v in awareness.items() if v}
+        if active_awareness:
+            lines.append("\n### CHARACTER AWARENESS & STATES:")
+            for actor_id, state in active_awareness.items():
+                if state:
+                    state_str = ", ".join(f"{k.replace('_', ' ')} is {v}" for k, v in state.items())
+                    lines.append(f"- {actor_id}: {state_str}")
+
+        # 6. Recent History (Consequences)
+        history = packet.get("recent_history") or []
+        if history:
+            lines.append("\n### RECENT NARRATIVE EVENTS:")
+            for h in history:
+                summary = h.get("narrative_summary") or h.get("summary")
+                if summary:
+                    lines.append(f"- {summary}")
+
+        # 7. Open Threads
+        threads = packet.get("open_threads") or []
+        if threads:
+            lines.append("\n### ACTIVE QUESTS & GOALS:")
+            for t in threads:
+                summary = t.get("narrative_summary") or t.get("summary")
+                if summary:
+                    lines.append(f"- {summary}")
+
+        # 8. Entity Histories
+        entity_hist = packet.get("entity_histories") or {}
+        active_entity_hist = {k: v for k, v in entity_hist.items() if v and (v.get("full") or v.get("compressed"))}
+        if active_entity_hist:
+            lines.append("\n### KNOWN LORE & HISTORY OF NEARBY ELEMENTS:")
+            for ent_id, hist in active_entity_hist.items():
+                recs = hist.get("compressed") or hist.get("full") or []
+                for r in recs:
+                    summary = r.get("narrative_summary") or r.get("summary")
+                    if summary:
+                        lines.append(f"- {summary}")
+
+        # 9. Player Journey
+        journey = packet.get("player_journey") or []
+        if journey:
+            lines.append("\n### YOUR RECENT MOVEMENTS:")
+            for j in journey:
+                summary = j.get("narrative_summary") or j.get("summary")
+                if summary:
+                    lines.append(f"- {summary}")
+
+        # 10. Relationship Histories
+        rel_hist = packet.get("relationship_histories") or {}
+        active_rel_hist = {k: v for k, v in rel_hist.items() if v}
+        if active_rel_hist:
+            lines.append("\n### RELATIONSHIPS & TENSIONS:")
+            for key, val in active_rel_hist.items():
+                if isinstance(val, dict):
+                    rel_str = ", ".join(f"{k}: {v}" for k, v in val.items())
+                    lines.append(f"- {key}: {rel_str}")
+                elif isinstance(val, list):
+                    for item in val:
+                        summary = item.get("narrative_summary") or item.get("summary")
+                        if summary:
+                            lines.append(f"- {summary}")
+
+        # 11. World Bleed
+        bleed = packet.get("world_bleed") or []
+        if bleed:
+            lines.append("\n### HISTORICAL LORE & WORLD BACKGROUND:")
+            for b in bleed:
+                summary = b.get("narrative_summary") or b.get("summary")
+                if summary:
+                    lines.append(f"- {summary}")
+
+        return "\n".join(lines).strip()
 
     def _collect_scene_entity_ids(self, scene: dict[str, Any]) -> set[str]:
         """Collect every entity_id visible in the scene dict."""

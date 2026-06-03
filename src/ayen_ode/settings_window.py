@@ -23,7 +23,8 @@ ENV_PATH = paths.env_path()
 ENV_EXAMPLE_PATH = paths.env_example_path()
 
 EDITABLE_KEYS = [
-    ("ANTHROPIC_API_KEY", "Anthropic API key", "Required. Starts with sk-ant-…", True),
+    ("ANTHROPIC_API_KEY", "Anthropic API key (optional)", "Optional. Local Qwen 2.5 is used by default.", True),
+    ("OPENROUTER_API_KEY", "OpenRouter API key (optional)", "Optional. If set, routes DeepSeek-Chat and Gemini 2.5 Pro via OpenRouter.", True),
     ("APP_USERNAME", "Login username", "Optional. Leave blank for no login.", False),
     ("APP_PASSWORD", "Login password", "Optional. Leave blank for no login.", True),
     ("ALLOWED_IPS", "Allowed client IPs", "Comma-separated. Leave blank for any.", False),
@@ -94,7 +95,7 @@ def load_current_values() -> dict[str, str]:
     cleaned: dict[str, str] = {}
     for key, *_ in EDITABLE_KEYS:
         v = parsed.get(key, "")
-        if v == "sk-ant-...":
+        if v in ("sk-ant-...", "sk-or-..."):
             v = ""
         cleaned[key] = v
     return cleaned
@@ -274,21 +275,6 @@ class SettingsApp:
     def _save(self) -> None:
         """Validate entries and write them to .env. Destroys the window on success."""
         new_values = {key: self.entries[key].get().strip() for key, *_ in EDITABLE_KEYS}
-
-        api_key = new_values.get("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            messagebox.showwarning(
-                "API key required",
-                "ANTHROPIC_API_KEY is empty. The server will start but narrative actions will fail until a key is set.",
-                parent=self.root,
-            )
-        elif not api_key.startswith("sk-ant-"):
-            if not messagebox.askyesno(
-                "Unusual API key",
-                "Anthropic API keys usually start with 'sk-ant-'. Save anyway?",
-                parent=self.root,
-            ):
-                return
 
         try:
             write_env(new_values)

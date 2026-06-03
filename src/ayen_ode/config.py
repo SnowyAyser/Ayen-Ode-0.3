@@ -10,9 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import os
+from typing import Any
 
 from dotenv import load_dotenv
-from anthropic import Anthropic
+from .local_ai import LocalAIClient
 
 from . import paths
 
@@ -35,11 +36,20 @@ if not paths.is_frozen():
 # Model constants
 # ---------------------------------------------------------------------------
 
-#: Primary narrator/world-builder model -- used for all narrative calls.
-SONNET_MODEL = "claude-sonnet-4-6"
+_openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip() or (
+    os.getenv("ANTHROPIC_API_KEY", "").strip() if os.getenv("ANTHROPIC_API_KEY", "").strip().startswith("sk-or-") else ""
+)
 
-#: Fast secondary model -- used for intake, quest scanning, and world init.
-HAIKU_MODEL = "claude-haiku-4-5-20251001"
+if _openrouter_key and _openrouter_key != "sk-or-...":
+    #: Primary narrator/world-builder model -- used for all narrative calls.
+    SONNET_MODEL = "google/gemini-2.5-pro"
+    #: Fast secondary model -- used for intake, quest scanning, and world init.
+    HAIKU_MODEL = "deepseek/deepseek-chat"
+else:
+    raise ValueError(
+        "OpenRouter API key is not configured. "
+        "Please click Settings on the dashboard to save your OpenRouter key."
+    )
 
 # config.py lives at src/ayen_ode/config.py -- three parents up is the project root
 # (kept for source-mode parity; frozen builds resolve paths via paths.py instead).
@@ -52,7 +62,8 @@ class Settings:
     host: str
     port: int
     anthropic_api_key: str
-    anthropic_client: Anthropic
+    openrouter_api_key: str
+    anthropic_client: Any
     app_username: str
     app_password: str
     allowed_ips: frozenset
@@ -60,6 +71,13 @@ class Settings:
 
 def load_settings() -> Settings:
     """Load settings from environment variables with local-friendly defaults."""
+    # Reload .env values from disk dynamically
+    try:
+        load_dotenv(paths.env_path(), override=True)
+        if not paths.is_frozen():
+            load_dotenv(override=True)
+    except Exception:
+        pass
 
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     # Treat the .env.example placeholder as unset.
@@ -69,6 +87,10 @@ def load_settings() -> Settings:
     # native settings window can be launched. Narrative calls will fail with
     # an Anthropic auth error until a real key is saved + server restarted.
 
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    if openrouter_key == "sk-or-...":
+        openrouter_key = ""
+
     # In frozen (desktop) builds the DB lives in %APPDATA%/Ayen-Ode/data/.
     # In source mode it stays at <repo>/data/ — same as before.
     db_path = paths.db_path_default()
@@ -76,9 +98,7 @@ def load_settings() -> Settings:
     host = os.getenv("AYEN_ODE_HOST", "0.0.0.0")
     port = int(os.getenv("PORT", os.getenv("AYEN_ODE_PORT", "8000")))
 
-    # Anthropic() rejects empty strings, so use a placeholder when unset.
-    # Real auth failure surfaces on the first API request.
-    client = Anthropic(api_key=api_key or "missing-api-key")
+    client = LocalAIClient(api_key=api_key)
 
     app_username = os.getenv("APP_USERNAME", "")
     app_password = os.getenv("APP_PASSWORD", "")
@@ -96,6 +116,7 @@ def load_settings() -> Settings:
         host=host,
         port=port,
         anthropic_api_key=api_key,
+        openrouter_api_key=openrouter_key,
         anthropic_client=client,
         app_username=app_username,
         app_password=app_password,
