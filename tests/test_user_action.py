@@ -96,6 +96,38 @@ class TestUserAction(unittest.TestCase):
         self.assertIn('"identify.target": "wooden chest"', response)
         self.assertEqual(len(updated_history), len(self.history) + 1)
 
+    @patch("ayen_ode.narrative.stages.utils.set_stage_progress")
+    @patch("ayen_ode.narrative.stages.utils.clear_stage_progress")
+    def test_process_user_action_sanitize_unknown_targets(self, mock_clear, mock_set):
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(type="text", text='{"player.identify": true, "identify.target": "unknown goblin", "towards.subject": "another unknown"}')]
+        self.mock_client.messages.create.return_value = mock_response
+
+        response, updated_history, _, _, _ = process_user_action(
+            client=self.mock_client,
+            service=self.mock_service,
+            world_id=self.world_id,
+            user_action="I inspect the unknown goblin",
+            conversation_history=self.history
+        )
+
+        self.assertIn('"identify.target": null', response)
+        self.assertIn('"towards.subject": null', response)
+
+        # Test case-insensitive normalization of a known subject
+        mock_response2 = MagicMock()
+        mock_response2.content = [MagicMock(type="text", text='{"player.identify": true, "identify.target": "WOODEN CHEST"}')]
+        self.mock_client.messages.create.return_value = mock_response2
+
+        response2, _, _, _, _ = process_user_action(
+            client=self.mock_client,
+            service=self.mock_service,
+            world_id=self.world_id,
+            user_action="I inspect the wooden chest",
+            conversation_history=self.history
+        )
+        self.assertIn('"identify.target": "wooden chest"', response2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -43,9 +43,11 @@ def process_user_action(
         "chest",
         "stone archway"
     ]
+    known_subjects_lower = [k.lower() for k in known_subjects]
     for subj in default_scene_subjects:
-        if subj not in known_subjects:
+        if subj.lower() not in known_subjects_lower:
             known_subjects.append(subj)
+            known_subjects_lower.append(subj.lower())
         
     subjects_context = "\n".join(f"- {subject}" for subject in known_subjects)
 
@@ -97,6 +99,32 @@ def process_user_action(
         elif clean_text.startswith("no_action_detected:"):
             narrative_response = clean_text[len("no_action_detected:"):].strip()
         else:
+            try:
+                parsed = json.loads(clean_text)
+                if isinstance(parsed, dict):
+                    # Validate and normalize/nullify towards.subject
+                    if "towards.subject" in parsed and parsed["towards.subject"] is not None:
+                        subj = str(parsed["towards.subject"]).strip().lower()
+                        matched = None
+                        for ks in known_subjects:
+                            if ks.lower() == subj:
+                                matched = ks
+                                break
+                        parsed["towards.subject"] = matched
+
+                    # Validate and normalize/nullify identify.target
+                    if "identify.target" in parsed and parsed["identify.target"] is not None:
+                        tgt = str(parsed["identify.target"]).strip().lower()
+                        matched = None
+                        for ks in known_subjects:
+                            if ks.lower() == tgt:
+                                matched = ks
+                                break
+                        parsed["identify.target"] = matched
+
+                    clean_text = json.dumps(parsed, indent=2)
+            except Exception as e:
+                logger.warning(f"Could not parse/validate action JSON: {e}")
             narrative_response = clean_text
     except Exception as e:
         logger.error(f"Failed action extraction: {e}")
