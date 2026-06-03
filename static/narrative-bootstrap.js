@@ -1,22 +1,24 @@
 // Narrative Client Module: Bootstrap & World Loader
 // Line limit compliance: Under 150 lines
-checkAuth();
-const params = new URLSearchParams(window.location.search);
-currentWorldId = params.get('world_id');
+function bootstrapNarrativeWorld() {
+  checkAuth();
+  const params = new URLSearchParams(window.location.search);
+  currentWorldId = params.get('world_id');
 
-if (!currentWorldId) {
-  apiCall("/api/worlds/active")
-    .then(data => {
-      if (data && data.world) {
-        currentWorldId = data.world.world_id;
-        loadWorld();
-      } else {
-        document.getElementById("narrativeContent").innerHTML =
-          '<div class="text-red-400 text-center py-12"><p>No active world. <a href="/dashboard.html" class="underline">Create one first</a></p></div>';
-      }
-    });
-} else {
-  loadWorld();
+  if (!currentWorldId) {
+    apiCall("/api/worlds/active")
+      .then(data => {
+        if (data && data.world) {
+          currentWorldId = data.world.world_id;
+          loadWorld();
+        } else {
+          document.getElementById("narrativeContent").innerHTML =
+            '<div class="text-red-400 text-center py-12"><p>No active world. <a href="/dashboard.html" class="underline">Create one first</a></p></div>';
+        }
+      });
+  } else {
+    loadWorld();
+  }
 }
 
 async function loadWorld() {

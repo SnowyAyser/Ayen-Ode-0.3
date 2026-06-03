@@ -14,7 +14,12 @@
   ];
 
   function loadModule(index) {
-    if (index >= submodules.length) return;
+    if (index >= submodules.length) {
+      if (typeof bootstrapNarrativeWorld === 'function') {
+        bootstrapNarrativeWorld();
+      }
+      return;
+    }
     const script = document.createElement('script');
     script.src = submodules[index];
     script.async = false;
