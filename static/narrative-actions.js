@@ -1004,6 +1004,11 @@ function drawMap() {
   const { canvas, width, height, scale, toCanvas, viewCenterX, viewCenterY, entitiesToDraw } = params;
   const ctx = canvas.getContext("2d");
   
+  const minVisibleX = viewCenterX - (width / 2) / scale;
+  const maxVisibleX = viewCenterX + (width / 2) / scale;
+  const minVisibleY = viewCenterY - (height / 2) / scale;
+  const maxVisibleY = viewCenterY + (height / 2) / scale;
+
   canvas.width = width * window.devicePixelRatio;
   canvas.height = height * window.devicePixelRatio;
   ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
@@ -1061,11 +1066,6 @@ function drawMap() {
   ctx.font = "7px monospace";
   ctx.textAlign = "center";
   const step = 120;
-  
-  const minVisibleX = viewCenterX - (width / 2) / scale;
-  const maxVisibleX = viewCenterX + (width / 2) / scale;
-  const minVisibleY = viewCenterY - (height / 2) / scale;
-  const maxVisibleY = viewCenterY + (height / 2) / scale;
   
   const startX = Math.floor(minVisibleX / step) * step;
   const endX = Math.ceil(maxVisibleX / step) * step;
