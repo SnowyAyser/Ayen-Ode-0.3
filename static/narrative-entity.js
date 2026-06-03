@@ -18,7 +18,15 @@ function linkifyEntityRefs(text, selfEntityId) {
   const matches = [];
   candidates.forEach(entity => {
     const escaped = entity.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
+    const base = escaped.endsWith('s') ? (escaped.endsWith('es') ? escaped.slice(0, -2) + '(es)?' : escaped.slice(0, -1) + 's?') : escaped;
+    
+    let regex;
+    if (entity.name.includes(' ')) {
+      regex = new RegExp(`\\b${base}(s|es)?\\b`, 'gi');
+    } else {
+      const capitalized = base.charAt(0).toUpperCase() + base.slice(1);
+      regex = new RegExp(`\\b${capitalized}(s|es)?\\b`, 'g');
+    }
     let m;
     while ((m = regex.exec(text)) !== null) {
       matches.push({ start: m.index, end: m.index + m[0].length, entity, matched: m[0] });
@@ -26,12 +34,20 @@ function linkifyEntityRefs(text, selfEntityId) {
   });
   if (!matches.length) return escapeHtml(text);
 
-  matches.sort((a, b) => a.start - b.start);
+  // Sort matches by length descending so longer matching phrases are kept first
+  matches.sort((a, b) => {
+    const lenA = a.end - a.start;
+    const lenB = b.end - b.start;
+    if (lenA !== lenB) return lenB - lenA;
+    return a.start - b.start;
+  });
+
   const noOverlap = [];
-  let lastEnd = 0;
   for (const m of matches) {
-    if (m.start >= lastEnd) { noOverlap.push(m); lastEnd = m.end; }
+    const overlaps = noOverlap.some(selected => !(m.end <= selected.start || m.start >= selected.end));
+    if (!overlaps) noOverlap.push(m);
   }
+  noOverlap.sort((a, b) => a.start - b.start);
 
   let result = '';
   let pos = 0;
@@ -216,7 +232,7 @@ function closeEntityDetail() {
 }
 
 async function openInvestigatedEntity(itemName) {
-  const entity = currentEntities.find(e => e.name.toLowerCase() === itemName.toLowerCase());
+  const entity = currentEntities.find(e => areNamesEquivalent(e.name, itemName));
   if (!entity) return;
   const entityId = entity.entity_id || entity.id;
   const etype = entity.entity_type || entity.type || 'unknown';
@@ -244,7 +260,8 @@ function detectEntityReferences(text, currentEntityName) {
 
     // Safely escape special characters like hyphens (e.g. Kal-Dorum) or dots in entity names for Regex matching
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
+    const base = escaped.endsWith('s') ? (escaped.endsWith('es') ? escaped.slice(0, -2) + '(es)?' : escaped.slice(0, -1) + 's?') : escaped;
+    const regex = new RegExp(`\\b${base}(s|es)?\\b`, 'gi');
     if (regex.test(text)) {
       references.push(id);
     }

@@ -41,6 +41,14 @@ def _assemble_world_data(service: Any, settings: Any, world_id: str | None) -> d
             )
         except Exception:
             pass
+    if handoff_text:
+        try:
+            from ..relinker import relink_text_programmatically, get_all_linkable_entities
+            already_investigated = get_all_linkable_entities(service, world_id)
+            handoff_text = relink_text_programmatically(handoff_text, already_investigated)
+        except Exception:
+            pass
+
     entities = service.list_entities(world=world_id)
     queue = service.get_investigation_queue(world=world_id)
     return {

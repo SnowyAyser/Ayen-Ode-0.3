@@ -163,7 +163,7 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
       </div>
       <div class="flex-1">
-        <p class="text-amber-200 text-sm font-medium">Anthropic API key not configured</p>
+        <p class="text-amber-200 text-sm font-medium">OpenRouter API key not configured</p>
         <p class="text-amber-400/70 text-xs mt-0.5">Open Settings to add your key. Worlds and narrative will fail without it.</p>
       </div>
       <button onclick="openSettingsModal()" class="bg-amber-800 hover:bg-amber-700 border border-amber-700/60 px-4 py-1.5 rounded-md text-sm font-medium text-amber-100 transition-colors whitespace-nowrap">
@@ -191,7 +191,7 @@
         <div class="w-0.5 h-4 bg-emerald-700 rounded-full"></div>
         <h2 class="font-semibold text-slate-200 text-sm tracking-wide uppercase">Create New World</h2>
       </div>
-      <a href="/create-world.html"
+      <a id="forgeWorldLink" href="/create-world.html"
          class="group block bg-slate-900 border border-slate-800 hover:border-amber-900/50 rounded-xl p-6 shadow-xl shadow-black/20 max-w-2xl transition-all duration-200 hover:shadow-amber-950/20 hover:shadow-2xl">
         <div class="flex items-center gap-5">
           <div class="flex-none w-12 h-12 rounded-full bg-amber-950/60 border border-amber-900/40 group-hover:border-amber-700/50 flex items-center justify-center transition-colors">
@@ -276,7 +276,20 @@
             <button type="button" onclick="toggleSettingSecret('settingApiKey', this)"
                     class="text-slate-500 hover:text-slate-200 text-xs px-3 rounded-md border border-slate-700 hover:bg-slate-800">show</button>
           </div>
-          <p id="settingApiKeyHint" class="text-[11px] text-slate-500 mt-1">Required for narrative actions.</p>
+          <p id="settingApiKeyHint" class="text-[11px] text-slate-500 mt-1">Optional. Local Qwen 2.5 is used by default.</p>
+        </div>
+
+        <!-- OpenRouter API key -->
+        <div>
+          <label class="block text-[10px] uppercase tracking-wide font-semibold text-slate-400 mb-1">OpenRouter API Key</label>
+          <div class="flex gap-2">
+            <input id="settingOpenRouterKey" type="password" autocomplete="off"
+                   class="flex-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded-md text-slate-100 text-sm placeholder-slate-600 focus:outline-none focus:border-amber-600 focus:ring-1 focus:ring-amber-600"
+                   placeholder="sk-or-…" />
+            <button type="button" onclick="toggleSettingSecret('settingOpenRouterKey', this)"
+                    class="text-slate-500 hover:text-slate-200 text-xs px-3 rounded-md border border-slate-700 hover:bg-slate-800">show</button>
+          </div>
+          <p id="settingOpenRouterKeyHint" class="text-[11px] text-slate-500 mt-1">Optional. If set, routes DeepSeek-Chat and Gemini 2.5 Pro via OpenRouter.</p>
         </div>
 
         <!-- Login credentials (optional) -->
@@ -470,9 +483,10 @@
         document.getElementById("settingDisplayBlock").classList.add("hidden");
       }
 
-      // Reset the API key field — it's write-only from the server's perspective,
+      // Reset the API key fields — they are write-only from the server's perspective,
       // we never receive the actual value back.
       document.getElementById("settingApiKey").value = "";
+      document.getElementById("settingOpenRouterKey").value = "";
 
       const data = await apiCall("/api/settings");
       if (!data) {
@@ -486,8 +500,18 @@
         hint.classList.remove("text-amber-400");
       } else {
         document.getElementById("settingApiKey").placeholder = "sk-ant-…";
-        hint.textContent = "Required for narrative actions.";
+        hint.textContent = "Optional. Local Qwen 2.5 is used by default.";
       }
+
+      const orHint = document.getElementById("settingOpenRouterKeyHint");
+      if (data.openrouter_api_key_set) {
+        document.getElementById("settingOpenRouterKey").placeholder = data.openrouter_api_key_masked || "(set)";
+        orHint.textContent = "A key is already saved. Type a new one to replace it, or leave blank to keep it.";
+      } else {
+        document.getElementById("settingOpenRouterKey").placeholder = "sk-or-…";
+        orHint.textContent = "Optional. If set, routes DeepSeek-Chat and Gemini 2.5 Pro via OpenRouter.";
+      }
+
       document.getElementById("settingUsername").value     = data.app_username || "";
       document.getElementById("settingPassword").value     = "";
       document.getElementById("settingPassword").placeholder = data.app_password_set ? "(unchanged)" : "(optional)";
@@ -506,6 +530,8 @@
       const payload = {};
       const apiKey = document.getElementById("settingApiKey").value.trim();
       if (apiKey) payload.ANTHROPIC_API_KEY = apiKey;
+      const orKey = document.getElementById("settingOpenRouterKey").value.trim();
+      if (orKey) payload.OPENROUTER_API_KEY = orKey;
       const username = document.getElementById("settingUsername").value;
       if (username) payload.APP_USERNAME = username.trim();
       const password = document.getElementById("settingPassword").value;
@@ -578,49 +604,26 @@
     let pendingDeleteId = null;
 
     async function loadData() {
-      const [worldsResp, activeResp] = await Promise.all([
-        apiCall("/api/worlds"),
-        apiCall("/api/worlds/active"),
-      ]);
-
-      if (worldsResp && worldsResp.worlds) renderWorlds(worldsResp.worlds);
-      if (activeResp && activeResp.world) {
-        renderActiveWorld(activeResp.world);
-      } else {
-        document.getElementById("activeWorldCard").innerHTML =
-          '<p class="text-slate-600 text-sm">No active world. Create one below or switch to an existing world.</p>';
+      const worldsResp = await apiCall("/api/worlds");
+      if (worldsResp && worldsResp.worlds) {
+        renderWorlds(worldsResp.worlds);
       }
     }
 
-    function renderActiveWorld(world) {
-      const safeName = (world.name || "Unknown").replace(/"/g, '&quot;');
-      document.getElementById("activeWorldCard").innerHTML = `
-        <div class="flex flex-col sm:flex-row sm:items-start gap-6" data-world-id="${world.world_id}" data-world-name="${safeName}">
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2 mb-1">
-              <h3 class="text-xl font-bold tracking-tight text-slate-100">${world.name || "Unknown"}</h3>
-              <span class="text-xs bg-emerald-950 text-emerald-400 border border-emerald-800/50 px-2 py-0.5 rounded-full">active</span>
-            </div>
-            <p class="text-slate-400 text-sm leading-relaxed">${world.premise || ""}</p>
-            ${world.theme_tone ? `<p class="text-slate-600 text-xs mt-2">${world.theme_tone}</p>` : ''}
-          </div>
-          <div class="flex-none flex flex-col gap-2 items-stretch">
-            <button
-              onclick="enterWorld('${world.world_id}')"
-              class="bg-amber-800 hover:bg-amber-700 border border-amber-700/50 px-5 py-2.5 rounded-lg text-sm font-medium text-amber-100 transition-colors whitespace-nowrap"
-            >
-              Enter World →
-            </button>
-            <button
-              onclick="testIntro('${world.world_id}')"
-              title="Replay opening scene without affecting saved chat history"
-              class="bg-slate-800 hover:bg-slate-700 border border-slate-700/60 px-5 py-1.5 rounded-md text-xs text-slate-400 hover:text-amber-300 transition-colors whitespace-nowrap"
-            >
-              Test intro
-            </button>
-          </div>
-        </div>
-      `;
+    async function handleEnterWorld(worldId, isActive) {
+      if (!isActive) {
+        const result = await apiCall("/api/worlds/switch", "POST", { world_id: worldId });
+        if (!result) return;
+      }
+      enterWorld(worldId);
+    }
+
+    async function handleTestIntro(worldId, isActive) {
+      if (!isActive) {
+        const result = await apiCall("/api/worlds/switch", "POST", { world_id: worldId });
+        if (!result) return;
+      }
+      testIntro(worldId);
     }
 
     function enterWorld(worldId) {
@@ -704,28 +707,21 @@
         const isActive = w.status === 'active';
         const safeName = (w.name || "Untitled").replace(/"/g, '&quot;');
         return `
-          <div class="bg-slate-900 border ${isActive ? 'border-amber-900/40' : 'border-slate-800'} rounded-xl p-5 shadow-lg shadow-black/20 flex flex-col gap-4" data-world-id="${w.world_id}" data-world-name="${safeName}">
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg shadow-black/20 flex flex-col gap-4" data-world-id="${w.world_id}" data-world-name="${safeName}">
             <div class="flex items-start justify-between gap-3">
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 mb-1">
                   <h3 class="font-semibold text-slate-100 truncate">${w.name || "Untitled"}</h3>
-                  ${isActive ? '<span class="text-xs bg-emerald-950 text-emerald-400 border border-emerald-800/50 px-1.5 py-0.5 rounded-full flex-none">active</span>' : ''}
                 </div>
                 <p class="text-slate-500 text-xs leading-relaxed">${(w.premise || "").substring(0, 80)}${(w.premise || "").length > 80 ? '…' : ''}</p>
               </div>
             </div>
             <div class="flex items-center gap-2 pt-1 border-t border-slate-800/60">
-              ${isActive ? `
-                <button onclick="enterWorld('${w.world_id}')" class="flex-1 bg-amber-800 hover:bg-amber-700 border border-amber-700/50 py-1.5 rounded-md text-xs font-medium text-amber-100 transition-colors text-center">
-                  Enter →
-                </button>
-              ` : `
-                <button onclick="switchWorld('${w.world_id}')" class="flex-1 bg-slate-800 hover:bg-slate-700 border border-slate-700/60 py-1.5 rounded-md text-xs font-medium text-slate-300 hover:text-slate-100 transition-colors text-center">
-                  Switch
-                </button>
-              `}
+              <button onclick="handleEnterWorld('${w.world_id}', ${isActive})" class="flex-1 bg-amber-800 hover:bg-amber-700 border border-amber-700/50 py-1.5 rounded-md text-xs font-medium text-amber-100 transition-colors text-center">
+                Enter →
+              </button>
               <button
-                onclick="testIntro('${w.world_id}')"
+                onclick="handleTestIntro('${w.world_id}', ${isActive})"
                 title="Replay opening scene"
                 class="bg-slate-800 hover:bg-slate-700 border border-slate-700/60 px-2.5 py-1.5 rounded-md text-xs font-medium text-slate-400 hover:text-amber-300 transition-colors"
               >
@@ -749,11 +745,9 @@
       }).join('');
 
       document.getElementById("worldsList").innerHTML = `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">${cards}</div>`;
-    }
-
-    async function switchWorld(worldId) {
-      const result = await apiCall("/api/worlds/switch", "POST", { world_id: worldId });
-      if (result) loadData();
+      if (typeof localAiReady !== "undefined" && !localAiReady) {
+        disableAllActionButtons(true, "Local AI Engine is preparing. Please wait...");
+      }
     }
 
     function openResetModal(worldId, worldName) {
@@ -867,6 +861,133 @@
     window.addEventListener('pywebviewready', initDesktopControls);
     window.addEventListener('DOMContentLoaded', initDesktopControls);
     initDesktopControls();
+
+    // --- Floating Local AI Download Status Panel ---
+    const localAiPanelHtml = `
+      <div id="localAiPanel" class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/85 backdrop-blur-md transition-all duration-500 opacity-0 pointer-events-none">
+        <div class="bg-slate-900/95 border border-slate-800 rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl flex flex-col items-center text-center transform scale-95 transition-all duration-500">
+          <!-- Spinner / Status Icon -->
+          <div id="localAiIcon" class="w-16 h-16 rounded-full bg-amber-900/20 border border-amber-500/30 flex items-center justify-center text-amber-400 mb-6 relative">
+            <div class="absolute inset-0 rounded-full border border-amber-500/10 animate-ping"></div>
+            <svg class="animate-spin h-8 w-8" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          </div>
+          
+          <h3 class="text-lg font-bold text-slate-100 tracking-wide mb-1">Local AI Narrator Booting</h3>
+          <p id="localAiStatus" class="text-sm text-slate-400 max-w-xs mb-6">Checking environment...</p>
+
+          <!-- Progress bar track -->
+          <div class="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-slate-800/80 mb-3 relative">
+            <div id="localAiProgress" class="bg-gradient-to-r from-amber-600 via-amber-500 to-amber-400 h-full w-0 transition-all duration-300 rounded-full"></div>
+          </div>
+          
+          <div class="flex items-center justify-between w-full text-xs text-slate-500 font-mono">
+            <span>QWEN 2.5:14B (9 GB)</span>
+            <span id="localAiPercent" class="text-sm font-bold text-amber-400">0%</span>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.addEventListener("DOMContentLoaded", () => {
+      document.body.insertAdjacentHTML("beforeend", localAiPanelHtml);
+      
+      // Start polling status
+      pollLocalAiStatus();
+      localAiStatusInterval = setInterval(pollLocalAiStatus, 2000);
+    });
+
+    let localAiStatusInterval = null;
+    let localAiReady = false;
+
+    async function pollLocalAiStatus() {
+      try {
+        const response = await fetch("/api/local-ai/status");
+        if (!response.ok) return;
+        const status = await response.json();
+        
+        const panel = document.getElementById("localAiPanel");
+        const statusText = document.getElementById("localAiStatus");
+        const percentText = document.getElementById("localAiPercent");
+        const progressBar = document.getElementById("localAiProgress");
+        const forgeLink = document.getElementById("forgeWorldLink");
+
+        if (!panel) return;
+        const innerCard = panel.querySelector(".transform");
+
+        if (!status.ollama_running) {
+          localAiReady = false;
+          panel.classList.remove("opacity-0", "pointer-events-none");
+          panel.classList.add("opacity-100");
+          if (innerCard) {
+            innerCard.classList.remove("scale-95");
+            innerCard.classList.add("scale-100");
+          }
+          statusText.textContent = "Ollama is offline. Starting it...";
+          percentText.textContent = "0%";
+          progressBar.style.width = "0%";
+          
+          if (forgeLink) {
+            forgeLink.classList.add("pointer-events-none", "opacity-40");
+            forgeLink.title = "Ollama is offline. Starting it...";
+          }
+          disableAllActionButtons(true, "Ollama is offline. Starting it...");
+        } else if (status.downloading) {
+          localAiReady = false;
+          panel.classList.remove("opacity-0", "pointer-events-none");
+          panel.classList.add("opacity-100");
+          if (innerCard) {
+            innerCard.classList.remove("scale-95");
+            innerCard.classList.add("scale-100");
+          }
+          statusText.textContent = status.download_status || "Downloading local model (9 GB)...";
+          const pct = Math.round(status.download_progress * 100);
+          percentText.textContent = `${pct}%`;
+          progressBar.style.width = `${pct}%`;
+          
+          if (forgeLink) {
+            forgeLink.classList.add("pointer-events-none", "opacity-40");
+            forgeLink.title = `Downloading Qwen 2.5:14b model (${pct}%)...`;
+          }
+          disableAllActionButtons(true, `Downloading Qwen 2.5:14b model (${pct}%)...`);
+        } else if (status.model_installed) {
+          localAiReady = true;
+          panel.classList.remove("opacity-100");
+          panel.classList.add("opacity-0", "pointer-events-none");
+          if (innerCard) {
+            innerCard.classList.remove("scale-100");
+            innerCard.classList.add("scale-95");
+          }
+          
+          if (forgeLink) {
+            forgeLink.classList.remove("pointer-events-none", "opacity-40");
+            forgeLink.title = "";
+          }
+          disableAllActionButtons(false);
+          
+          clearInterval(localAiStatusInterval);
+        }
+      } catch (err) {
+        console.error("Failed to fetch Local AI status", err);
+      }
+    }
+
+    function disableAllActionButtons(disable, reason) {
+      const buttons = document.querySelectorAll("#worldsList button");
+      buttons.forEach(btn => {
+        if (disable) {
+          btn.disabled = true;
+          btn.classList.add("opacity-40", "pointer-events-none");
+          btn.title = reason;
+        } else {
+          btn.disabled = false;
+          btn.classList.remove("opacity-40", "pointer-events-none");
+          btn.title = "";
+        }
+      });
+    }
   </script>
 </body>
 </html>

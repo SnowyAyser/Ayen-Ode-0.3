@@ -382,3 +382,10 @@ class ConsequenceTests(unittest.TestCase):
         self.svc.remove_consequence_hook(hook["hook_id"], world=self.wid)
         hooks_after = self.svc.list_consequence_hooks(world=self.wid)
         self.assertEqual(len(hooks_after["hooks"]), 0)
+
+    def test_are_names_equivalent_with_articles(self) -> None:
+        from ayen_ode.routes.consequence_narrative import are_names_equivalent
+        self.assertTrue(are_names_equivalent("Execution Tower", "the Execution Tower"))
+        self.assertTrue(are_names_equivalent("the execution towers", "Execution Tower"))
+        self.assertTrue(are_names_equivalent("a Mark of Treachery", "the mark of treachery"))
+        self.assertFalse(are_names_equivalent("Execution Tower", "Treachery"))

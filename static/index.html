@@ -224,47 +224,82 @@
       if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
     }
 
-    // Autofill username
+    // Autofill username & credentials if toggled on
     let savedUsernameApplied = false;
     async function applySavedUsername() {
-      let saved = localStorage.getItem('savedUsername');
-      let gotFromApi = false;
-      if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.get_saved_username === "function") {
+      const usernameInput = document.getElementById('username');
+      const passwordInput = document.getElementById('password');
+      if (usernameInput) usernameInput.value = "";
+      if (passwordInput) passwordInput.value = "";
+
+      let isAutoLoginEnabled = false;
+      if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.get_auto_login === "function") {
         try {
-          const apiSaved = await window.pywebview.api.get_saved_username();
-          if (apiSaved) {
-            saved = apiSaved;
+          isAutoLoginEnabled = await window.pywebview.api.get_auto_login();
+        } catch (e) {
+          console.error("Error reading auto-login preference:", e);
+        }
+      } else {
+        isAutoLoginEnabled = localStorage.getItem('autoLogin') === 'true';
+      }
+
+      if (!isAutoLoginEnabled) {
+        // Only focus username field if auto-login is disabled
+        if (usernameInput) {
+          setTimeout(() => {
+            usernameInput.focus();
+          }, 150);
+        }
+        return;
+      }
+
+      let saved = localStorage.getItem('savedUsername') || "";
+      let savedPass = "";
+      let gotFromApi = false;
+
+      if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.get_configured_credentials === "function") {
+        try {
+          const apiCreds = await window.pywebview.api.get_configured_credentials();
+          if (apiCreds) {
+            saved = apiCreds.username || saved;
+            savedPass = apiCreds.password || "";
             gotFromApi = true;
           }
         } catch (e) {
-          console.error("Error reading saved username from desktop API:", e);
+          console.error("Error reading saved credentials from desktop API:", e);
         }
       }
-      
+
       if (saved) {
-        const usernameInput = document.getElementById('username');
         if (usernameInput) {
           usernameInput.value = saved;
-          // Fire input and change events to ensure UI/framework alignment
           usernameInput.dispatchEvent(new Event('input', { bubbles: true }));
           usernameInput.dispatchEvent(new Event('change', { bubbles: true }));
-          
-          // Focus the password input
-          setTimeout(() => {
-            const passwordInput = document.getElementById('password');
-            if (passwordInput) passwordInput.focus();
-          }, 150);
-          
           if (gotFromApi) {
             savedUsernameApplied = true;
           }
         }
-      } else {
-        setTimeout(() => {
-          const usernameInput = document.getElementById('username');
-          if (usernameInput) usernameInput.focus();
-        }, 150);
       }
+
+      if (savedPass) {
+        if (passwordInput) {
+          passwordInput.value = savedPass;
+          passwordInput.dispatchEvent(new Event('input', { bubbles: true }));
+          passwordInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }
+
+      // Stagger focus
+      setTimeout(() => {
+        if (saved && savedPass) {
+          const submitBtn = document.querySelector('button[type="submit"]');
+          if (submitBtn) submitBtn.focus();
+        } else if (passwordInput && saved) {
+          passwordInput.focus();
+        } else if (usernameInput) {
+          usernameInput.focus();
+        }
+      }, 150);
     }
 
     // Run immediately on script mount
@@ -302,10 +337,31 @@
           try {
             const autoLoginVal = await window.pywebview.api.get_auto_login();
             const chk = document.getElementById('auto-login');
-            if (chk) chk.checked = !!autoLoginVal;
+            if (chk) {
+              chk.checked = !!autoLoginVal;
+              // Synchronize localStorage with desktop preference
+              localStorage.setItem('autoLogin', autoLoginVal ? 'true' : 'false');
+            }
           } catch (e) {}
         }
       }
+
+      // Save preference immediately on checkbox toggle
+      const chk = document.getElementById('auto-login');
+      if (chk) {
+        chk.addEventListener('change', async (e) => {
+          const checked = e.target.checked;
+          localStorage.setItem('autoLogin', checked ? 'true' : 'false');
+          if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.save_auto_login === "function") {
+            try {
+              await window.pywebview.api.save_auto_login(checked);
+            } catch (err) {}
+          }
+          // Immediately update input values based on new state
+          applySavedUsername();
+        });
+      }
+
       // Show auto-login checkbox only if running locally (desktop mode / local testing)
       const isLocal = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost';
       if (!isLocal) {

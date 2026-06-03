@@ -209,15 +209,14 @@ class ContextAssemblerTests(unittest.TestCase):
     # T9: packet is JSON-serializable
     # ------------------------------------------------------------------
 
-    def test_t9_packet_is_json_serializable(self) -> None:
+    def test_t9_packet_is_markdown_prose(self) -> None:
         room = self._entity("Room", "location")
         player = self._entity("Aryn", "character")
         self._move(player["entity_id"], room["entity_id"])
         packet = self.assembler.assemble(self.wid, player["entity_id"])
         text = self.assembler.to_prompt_text(packet)
-        parsed = json.loads(text)
-        self.assertIn("scene", parsed)
-        self.assertIn("player", parsed)
+        self.assertIsInstance(text, str)
+        self.assertIn("CURRENT SCENE & SURROUNDINGS", text)
 
     # ------------------------------------------------------------------
     # T10: empty world — completes without error

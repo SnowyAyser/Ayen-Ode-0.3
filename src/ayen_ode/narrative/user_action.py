@@ -1,0 +1,112 @@
+from typing import Any
+import json
+import logging
+
+from ..config import HAIKU_MODEL
+
+logger = logging.getLogger("ayen_ode.narrative.user_action")
+
+
+def _clean_json_text(text: str) -> str:
+    text = text.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    return text
+
+
+def process_user_action(
+    client: Any,
+    service: Any,
+    world_id: str,
+    user_action: str,
+    conversation_history: list[dict],
+    player_entity_id: str | None = None,
+) -> tuple[str, list[dict], dict, dict, dict]:
+    """Process a user action and extract a simple JSON response of trigger states."""
+
+    # Retrieve all database entities as possible subjects
+    existing_entities = service.list_entities(world=world_id)
+    entity_list = existing_entities.get("entities", [])
+    
+    known_subjects = [e["name"] for e in entity_list if e.get("name")]
+    if "old man" not in known_subjects:
+        known_subjects.append("old man")
+    if "self" not in known_subjects:
+        known_subjects.append("self")
+        
+    subjects_context = "\n".join(f"- {subject}" for subject in known_subjects)
+
+    # Formulate recent history text for model context
+    history_text = ""
+    for m in conversation_history[-6:]:
+        role = "Player" if m["role"] == "user" else "Narrator"
+        history_text += f"[{role}]: {m['content']}\n"
+
+    # Construct the instruction prompt
+    system_prompt = (
+        "You are an action-detection assistant. Check if the player's action indicates the general idea or intent of either of the actions below (it does not need to match the exact wording). If they did, output ONLY the corresponding JSON block (set fields to null if unspecified or unclear). If they did not perform any of these actions, return a plain text message starting with \"no_action_detected: \" explaining that no movement or identify action was detected.\n\n"
+        "Available Actions & JSON Syntax:\n"
+        "1. Movement (player.move = true):\n"
+        "{\n"
+        '  "player.move": true,\n'
+        '  "move.direction": "towards" | "away" | "north" | "south" | "east" | "west" | "forwards" | "back" or null,\n'
+        '  "towards.subject": string or null (ONLY if it matches a subject from the list below, otherwise null. Defaults to "self" for relative/cardinal directions),\n'
+        '  "move.distance_inches": integer or null (convert distance to inches, e.g. "3 feet" -> 36)\n'
+        "}\n\n"
+        "2. Identify/Inspect (player.identify = true):\n"
+        "{\n"
+        '  "player.identify": true,\n'
+        '  "identify.target": string or null (ONLY if it matches a subject from the list below, otherwise null)\n'
+        "}\n\n"
+        "Available Subjects in the current scene:\n"
+        f"{subjects_context}\n"
+    )
+
+    user_prompt = (
+        f"Recent conversation history:\n{history_text}\n"
+        f"Player action to analyze:\n{user_action}"
+    )
+
+    # Update progress status
+    from .stages.utils import set_stage_progress, clear_stage_progress
+    try:
+        set_stage_progress(world_id, "Stage 1/1: Extracting Action JSON...")
+        response = client.messages.create(
+            model=HAIKU_MODEL,
+            max_tokens=512,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}]
+        )
+        raw_text = "".join(b.text for b in response.content if b.type == "text").strip()
+        clean_text = _clean_json_text(raw_text)
+        if clean_text.startswith("no_movement_detected:"):
+            narrative_response = clean_text[len("no_movement_detected:"):].strip()
+        elif clean_text.startswith("no_action_detected:"):
+            narrative_response = clean_text[len("no_action_detected:"):].strip()
+        else:
+            narrative_response = clean_text
+    except Exception as e:
+        logger.error(f"Failed action extraction: {e}")
+        # Return fallback JSON indicating error
+        narrative_response = json.dumps({
+            "player.move": False,
+            "move.direction": None,
+            "towards.subject": None,
+            "move.distance_inches": None,
+            "player.identify": False,
+            "identify.target": None
+        }, indent=2)
+    finally:
+        clear_stage_progress(world_id)
+
+    updated_history = conversation_history.copy()
+    if narrative_response:
+        updated_history.append({"role": "assistant", "content": narrative_response})
+
+    # Return narrative response along with empty reports to preserve route/viewer compatibility
+    return narrative_response, updated_history, {}, {}, {}
