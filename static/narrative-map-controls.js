@@ -30,7 +30,7 @@ window.addEventListener("resize", () => {
       const coords = getSubjectCoord(s.name);
       const canvasPos = params.toCanvas(coords);
       
-      if (s.name.toLowerCase() === "door") {
+      if (s.name.toLowerCase().startsWith("door")) {
         const doorTopY = canvasPos.y - 18 * params.scale;
         const doorBottomY = canvasPos.y + 18 * params.scale;
         if (Math.abs(clickX - canvasPos.x) <= 6 && clickY >= doorTopY && clickY <= doorBottomY) {
@@ -46,9 +46,6 @@ window.addEventListener("resize", () => {
       }
       
       let labelText = s.name.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
-      if (s.name.toLowerCase() === "door") {
-        labelText = "Door Module";
-      }
       const textWidth = ctx.measureText(labelText).width;
       const textLeft = canvasPos.x + 7;
       const textRight = textLeft + textWidth;

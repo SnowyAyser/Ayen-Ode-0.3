@@ -132,7 +132,7 @@ class TestUserAction(unittest.TestCase):
     @patch("ayen_ode.narrative.stages.utils.clear_stage_progress")
     def test_process_user_action_door_use_action(self, mock_clear, mock_set):
         mock_response = MagicMock()
-        mock_response.content = [MagicMock(type="text", text='{"player.door_use": true, "door.target": "door"}')]
+        mock_response.content = [MagicMock(type="text", text='{"player.door_use": true, "door.target": "door 1a"}')]
         self.mock_client.messages.create.return_value = mock_response
 
         response, updated_history, _, _, _ = process_user_action(
@@ -144,7 +144,7 @@ class TestUserAction(unittest.TestCase):
         )
 
         self.assertIn('"player.door_use": true', response)
-        self.assertIn('"door.target": "door"', response)
+        self.assertIn('"door.target": "door 1a"', response)
         self.assertEqual(len(updated_history), len(self.history) + 1)
 
 

@@ -42,7 +42,8 @@ def process_user_action(
         "wooden chest",
         "chest",
         "stone archway",
-        "door"
+        "door 1a",
+        "door 1b"
     ]
     known_subjects_lower = [k.lower() for k in known_subjects]
     for subj in default_scene_subjects:

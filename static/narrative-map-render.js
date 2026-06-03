@@ -116,7 +116,7 @@ function drawMap() {
     const isFocused = e.name.toLowerCase() === lastTargetSubject.toLowerCase();
     const isHovered = hoveredSubject && e.name.toLowerCase() === hoveredSubject.toLowerCase();
     
-    if (e.name.toLowerCase() === "door") {
+    if (e.name.toLowerCase().startsWith("door")) {
       const doorTop = toCanvas({ x: -120, y: 18 });
       const doorBottom = toCanvas({ x: -120, y: -18 });
       
@@ -130,7 +130,7 @@ function drawMap() {
       ctx.lineWidth = isHovered ? 2 : 1.5;
       ctx.strokeRect(canvasPos.x - 3, doorTop.y, 6, doorBottom.y - doorTop.y);
 
-      const labelText = "Door Module";
+      const labelText = e.name.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
       ctx.fillStyle = isFocused ? "#f59e0b" : (isHovered ? "#f8fafc" : "#94a3b8");
       ctx.font = isFocused || isHovered ? "bold 9px sans-serif" : "9px sans-serif";
       ctx.fillText(labelText, canvasPos.x + 8, canvasPos.y + 3);

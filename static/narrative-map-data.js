@@ -12,7 +12,8 @@ const defaultEntities = [
   { name: "paladin guard", type: "character" },
   { name: "wooden chest", type: "object" },
   { name: "stone archway", type: "location" },
-  { name: "door", type: "object" }
+  { name: "door 1a", type: "object" },
+  { name: "door 1b", type: "object" }
 ];
 
 function resolveSubjectName(name) {
@@ -29,7 +30,8 @@ function resolveSubjectName(name) {
     { name: "paladin guard", type: "character" },
     { name: "wooden chest", type: "object" },
     { name: "stone archway", type: "location" },
-    { name: "door", type: "object" }
+    { name: "door 1a", type: "object" },
+    { name: "door 1b", type: "object" }
   ];
   
   defaults.forEach(d => {
@@ -171,7 +173,7 @@ function getMapViewParams() {
 }
 
 function checkProximityDoorUse(jsonPayload, actionText, submitBtn, activeStageInterval) {
-  const targetName = jsonPayload["door.target"] || "door";
+  const targetName = jsonPayload["door.target"] || "door 1a";
   const resolvedTarget = resolveSubjectName(targetName);
   const targetPos = getSubjectCoord(resolvedTarget);
   const dx = targetPos.x - playerPos.x;
