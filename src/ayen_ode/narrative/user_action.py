@@ -34,10 +34,18 @@ def process_user_action(
     entity_list = existing_entities.get("entities", [])
     
     known_subjects = [e["name"] for e in entity_list if e.get("name")]
-    if "old man" not in known_subjects:
-        known_subjects.append("old man")
-    if "self" not in known_subjects:
-        known_subjects.append("self")
+    default_scene_subjects = [
+        "old man",
+        "self",
+        "paladin guard",
+        "paladin",
+        "wooden chest",
+        "chest",
+        "stone archway"
+    ]
+    for subj in default_scene_subjects:
+        if subj not in known_subjects:
+            known_subjects.append(subj)
         
     subjects_context = "\n".join(f"- {subject}" for subject in known_subjects)
 
